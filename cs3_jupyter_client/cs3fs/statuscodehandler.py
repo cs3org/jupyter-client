@@ -23,4 +23,24 @@ class StatusCodeHandler:
             raise PermissionError("Authentication failed")
         if isinstance(e, PermissionDeniedException):
             raise PermissionError("Permission denied")
+        if isinstance(e, ValueError):
+            raise ValueError("Invalid input")
         raise OSError("Unknown error occurred")
+
+class ErrorToHttpCode:
+    def map_exception_to_http_code(self, e: Exception) -> int:
+        if isinstance(e, FileLockedException):
+            return 423  # Locked
+        if isinstance(e, AlreadyExistsException):
+            return 409  # Conflict
+        if isinstance(e, UnimplementedException):
+            return 501  # Not Implemented
+        if isinstance(e, NotFoundException):
+            return 404  # Not Found
+        if isinstance(e, AuthenticationException):
+            return 401  # Unauthorized
+        if isinstance(e, PermissionDeniedException):
+            return 403  # Forbidden
+        if isinstance(e, ValueError):
+            return 400  # Bad Request
+        return 500  # Internal Server Error

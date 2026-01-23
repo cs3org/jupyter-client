@@ -1,5 +1,6 @@
 grpcio>=1.47.0
 grpcio-tools>=1.47.0
+cs3client>=1.6.0
 pyOpenSSL
 requests
 cs3apis>=0.1.dev101
@@ -7,4 +8,3 @@ PyJWT
 protobuf
 cryptography
 sphinx
-cs3client>=0.1

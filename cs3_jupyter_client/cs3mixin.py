@@ -2,6 +2,7 @@ from __future__ import annotations
 
 
 import os
+import inspect
 from traitlets import Bool, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
 from .cs3fs.cs3fs import create_cs3_filesystem
@@ -129,86 +130,44 @@ class CS3Mixin(LoggingConfigurable):
         performant than trying to reuse the same client."""
         return self._get_cs3_fs_indep()
 
-    def retry_on_auth_failure(func):
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            try:
-                return func(self, *args, **kwargs)
-            except PermissionError as e:
-                self.log.error(f"cs3mixin: {func.__name__.upper()} AUTH ERROR - {e}, reading token and retrying...")
+    def __getattr__(self, name: str):
+        no_proxy = {
+            "cs3_fs", "_get_cs3_fs_indep", "_read_token_file", "_create_cs3_config",
+            "_config", "_user_path", "log", "token_path", "cs3_token", "root_path",
+        }
+        # Don't proxy these attributes
+        if name in no_proxy or name.startswith("_"):
+            raise AttributeError(name)
+
+        # Get cs3_fs without triggering __getattr__ again
+        cs3_fs = object.__getattribute__(self, "cs3_fs")
+
+        # Delegate; if cs3_fs doesn't have it, let AttributeError propagate
+        target = getattr(cs3_fs, name)
+
+        if not callable(target):
+            return target
+
+        # Wrap sync vs async
+        if inspect.iscoroutinefunction(target):
+            @wraps(target)
+            async def async_wrapped(*args, **kwargs):
                 try:
-                    self._read_token_file()
-                    return func(self, *args, **kwargs)
-                except Exception as e:
-                    self.log.error(f"cs3mixin: {func.__name__.upper()} ERROR - {e}")
-                    raise e
-        return wrapper
+                    return await target(*args, **kwargs)
+                except PermissionError as e:
+                    log = object.__getattribute__(self, "log")
+                    log.error(f"cs3mixin: {name.upper()} AUTH ERROR - {e}, reading token and retrying...")
+                    object.__getattribute__(self, "_read_token_file")()
+                    return await getattr(object.__getattribute__(self, "cs3_fs"), name)(*args, **kwargs)
+            return async_wrapped
 
-    @retry_on_auth_failure
-    def access(self, path, mode):
-        return self.cs3_fs.access(path, mode)
-
-    @retry_on_auth_failure
-    def lstat(self, path):
-        return self.cs3_fs.lstat(path)
-
-    @retry_on_auth_failure
-    def is_dir(self, path):
-        return self.cs3_fs.is_dir(path)
-
-    @retry_on_auth_failure
-    def list_dir(self, path):
-        return self.cs3_fs.list_dir(path)
-
-    @retry_on_auth_failure
-    def mkdir(self, path):
-        return self.cs3_fs.mkdir(path)
-
-    @retry_on_auth_failure
-    def rmdir(self, path):
-        return self.cs3_fs.unlink(path)
-
-    @retry_on_auth_failure
-    def unlink(self, path):
-        return self.cs3_fs.unlink(path)
-
-    @retry_on_auth_failure
-    def move(self, src, dest):
-        return self.cs3_fs.rename(src, dest)
-
-    @retry_on_auth_failure
-    def is_file(self, path):
-        return self.cs3_fs.is_file(path)
-
-    @retry_on_auth_failure
-    async def copy_tree(self, src, dest):
-        return await self.cs3_fs.copy_tree(src, dest)
-
-    @retry_on_auth_failure
-    def get_dir_size(self, path):
-        return self.cs3_fs._get_dir_size(path)
-
-    @retry_on_auth_failure
-    def abs_path(self, path):
-        return self.cs3_fs.abs_path(path)
-
-    @retry_on_auth_failure
-    async def copyfile(self, src, dest):
-        return await self.cs3_fs.copyfile(src, dest)
-
-    @retry_on_auth_failure
-    def open(self, path, mode, encoding = None, **kwargs):
-        return self.cs3_fs.open(path, mode, encoding, **kwargs)
-
-    @retry_on_auth_failure
-    def read_file(self, path: str, format = None, raw = False):
-        res = self.cs3_fs._read_file(path, format, raw)
-        return res
-
-    @retry_on_auth_failure
-    def list_file_versions(self, path):
-        return self.cs3_fs.list_file_versions(path)
-
-    @retry_on_auth_failure
-    def restore_file_version(self, path, version_key):
-        return self.cs3_fs.restore_file_version(path, version_key)
+        @wraps(target)
+        def wrapped(*args, **kwargs):
+            try:
+                return target(*args, **kwargs)
+            except PermissionError as e:
+                log = object.__getattribute__(self, "log")
+                log.error(f"cs3mixin: {name.upper()} AUTH ERROR - {e}, reading token and retrying...")
+                object.__getattribute__(self, "_read_token_file")()
+                return getattr(object.__getattribute__(self, "cs3_fs"), name)(*args, **kwargs)
+        return wrapped

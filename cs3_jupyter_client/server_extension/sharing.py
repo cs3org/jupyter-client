@@ -1,0 +1,362 @@
+# sharing/handlers.py
+from tornado import web
+from jupyter_server.base.handlers import APIHandler
+from jupyter_server.utils import url_path_join
+from google.protobuf.json_format import MessageToDict
+from ..cs3fs.statuscodehandler import ErrorToHttpCode
+
+
+
+class SharesHandler(APIHandler):
+
+    @web.authenticated
+    async def post(self):
+        """
+        Create a share for a resource.
+        :query param path: path to the resource(REQUIRED).
+        :field opaque_id: Opaque group/user id, (REQUIRED).
+        :field idp: Identity provider, (REQUIRED).
+        :field role: Role to assign to the grantee, VIEWER or EDITOR (REQUIRED).
+        :field grantee_type: Type of grantee, USER or GROUP (REQUIRED).
+        """
+        # Get the resource path from query parameters
+        path = self.get_query_argument("path", default="")
+        # Get other parameters from the request body
+        body = self.get_json_body() or {}
+        opaque_id = body.get("opaque_id", "")
+        idp = body.get("idp", "")
+        role = body.get("role", "")
+        grantee_type = body.get("grantee_type", "USER")
+        
+        # Reuse client from the contents manager
+        cm = self.contents_manager
+        self.log.info(f"Creating share for path: {path} to {grantee_type} {opaque_id} with role {role}")
+        try:
+            share = cm.create_share(opaque_id, idp, role, path, grantee_type)
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+
+        share = MessageToDict(share, preserving_proto_field_name=True)
+
+        self.set_status(201)
+        self.write({"created": True, "data": body, "path": path, "share": share})
+
+    @web.authenticated
+    async def put(self):
+        """
+        Update a share for a resource.
+        :query param share_id: The ID of the share to update (REQUIRED).
+        :field role: Role to update the share, VIEWER or EDITOR (REQUIRED).
+        :field display_name: new display name.
+        """
+        # Get the resource path from query parameters
+        share_id = self.get_query_argument("share_id", default=None)
+        body = self.get_json_body() or {}
+        role = body.get("role", None)
+        display_name = body.get("display_name", None)
+
+        cm = self.contents_manager
+        self.log.info(f"Updating share: {share_id} with role {role} and display name {display_name}")
+        try:
+            share = cm.update_share(share_id, role=role, display_name=display_name)
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+
+        share = MessageToDict(share, preserving_proto_field_name=True)
+        self.set_status(200)
+        self.write({"updated": True, "data": body, "share": share})
+
+    @web.authenticated
+    async def delete(self):
+        """
+        Remove a share for a resource.
+        :field share_id: The ID of the share to remove (REQUIRED).
+        """
+        # Get the resource path from query parameters
+        share_id = self.get_query_argument("share_id", default=None)
+        cm = self.contents_manager
+        try:
+            cm.remove_share(share_id)
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+
+        self.set_status(204)
+
+class LinkHandler(APIHandler):
+
+    @web.authenticated
+    async def post(self):
+        """
+        Create a public link for a resource.
+        :query param path: path to the resource(REQUIRED).
+        :field role: Role to assign to the grantee, VIEWER or EDITOR (REQUIRED)
+        :field password: Password to access the share.
+        :field expiration: Expiration timestamp for the share.
+        :field description: Description for the share.
+        :field internal: Internal share flag.
+        :field notify_upload: Notify upload flag.
+        :field notify_uploads_extra_recipients: List of extra recipients to notify on upload.
+        """
+        # Get the resource path from query parameters
+        path = self.get_query_argument("path", default="")
+        # Get other parameters from the request body
+        body = self.get_json_body() or {}
+        role = body.get("role", "")
+        password = body.get("password", None)
+        expiration = body.get("expiration", None)
+        description = body.get("description", None)
+        internal = body.get("internal", False)
+        notify_uploads = body.get("notify_uploads", False)
+        notify_uploads_extra_recipients = body.get("notify_uploads_extra_recipients", None)
+
+        # Reuse client from the contents manager
+        cm = self.contents_manager
+        self.log.info(f"Creating public share for path: {path} with role {role}")
+        try:
+            share = cm.create_public_share(
+                path,
+                role,
+                password=password,
+                expiration=expiration,
+                description=description,
+                internal=internal,
+                notify_uploads=notify_uploads,
+                notify_uploads_extra_recipients=notify_uploads_extra_recipients
+            )
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+        
+        share = MessageToDict(share, preserving_proto_field_name=True)
+
+        self.set_status(201)
+        self.write({"created": True, "data": body, "path": path, "share": share})
+
+    @web.authenticated
+    async def put(self):
+        """
+        Update a public link for a resource.
+        :query param opaque_id: The ID of the share to update (REQUIRED).
+        :field type: Type of update to perform TYPE_PERMISSIONS, TYPE_PASSWORD, TYPE_EXPIRATION, TYPE_DISPLAYNAME,
+                        TYPE_DESCRIPTION, TYPE_NOTIFYUPLOADS, TYPE_NOTIFYUPLOADSEXTRARECIPIENTS (REQUIRED).
+        :field role: Role to assign to the grantee, VIEWER or EDITOR (REQUIRED).
+        :field opaque_id: Opaque share id (REQUIRED).
+        :field display_name: Display name for the share.
+        :field description: Description for the share.
+        :field notify_uploads: Notify uploads flag.
+        :field expiration: Expiration timestamp for the share.
+        :field notify_uploads_extra_recipients: List of extra recipients to notify on upload.
+        :field password: Password to access the share.
+        """
+        # Get the share_id from query parameters
+        share_id = self.get_query_argument("share_id", default="")
+        # Get other parameters from the request body
+        body = self.get_json_body() or {}
+        type = body.get("type", "")
+        role = body.get("role", "")
+        password = body.get("password", None)
+        expiration = body.get("expiration", None)
+        description = body.get("description", None)
+        display_name = body.get("display_name", None)
+        notify_uploads = body.get("notify_uploads", False)
+        notify_uploads_extra_recipients = body.get("notify_uploads_extra_recipients", None)
+
+        cm = self.contents_manager
+
+        self.log.info(f"Updating public share: {share_id} with type {type} role {role}")
+        try:
+            share = cm.update_public_share(
+                share_id,
+                type=type,
+                role=role,
+                password=password,
+                expiration=expiration,
+                description=description,
+                notify_uploads=notify_uploads,
+                display_name=display_name,
+                notify_uploads_extra_recipients=notify_uploads_extra_recipients
+            )
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+        share = MessageToDict(share, preserving_proto_field_name=True)
+
+        self.set_status(200)
+        self.write({"updated": True, "data": body, "share": share})
+
+    @web.authenticated
+    async def delete(self):
+        """
+        Remove a share for a resource.
+        :field share_id: The ID of the share to remove (REQUIRED).
+        """
+        # Get the resource path from query parameters
+        share_id = self.get_query_argument("share_id", default=None)
+        cm = self.contents_manager
+
+        try:
+            cm.remove_public_share(share_id)
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+
+        self.set_status(204)
+
+class SharedWithMeHandler(APIHandler):
+    @web.authenticated
+    async def get(self):
+        cm = self.contents_manager
+        try:
+            shares, _ = cm.list_received_existing_shares()
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+        shares_list = [
+            MessageToDict(s, preserving_proto_field_name=True)
+            for s in shares
+        ]
+
+        self.set_header("Content-Type", "application/json")
+        self.write({"shares": shares_list})
+
+
+class SharedByMeHandler(APIHandler):
+    """
+    Handler for retrieving shares created by the user, both regular and public shares.
+    """
+    @web.authenticated
+    async def get(self):
+        headers = self.request.headers
+        creator_idp = headers.get("creator_idp", "")
+        creator_opaque_id = headers.get("creator_opaque_id", "")
+        cm = self.contents_manager
+        try:
+            shares, _ = cm.list_existing_shares_by_creator(creator_idp, creator_opaque_id)
+            public_shares, _ = cm.list_existing_public_shares_by_creator(creator_idp, creator_opaque_id)
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+        shares_list = [
+            MessageToDict(s, preserving_proto_field_name=True)
+            for s in shares
+        ]
+        public_shares_list = [
+            MessageToDict(s, preserving_proto_field_name=True)
+            for s in public_shares
+        ]
+        self.set_header("Content-Type", "application/json")
+        self.write({"shares": shares_list, "public_shares": public_shares_list})
+
+
+class SharedByResourceHandler(APIHandler):
+    """
+    Handler for retrieving regular and public shares created by the user for a specific resource.
+    query param path: path to the resource (REQUIRED).
+    """
+    @web.authenticated
+    async def get(self):
+        path = self.get_query_argument("path", default="")
+        cm = self.contents_manager
+        try:
+            shares, _ = cm.list_existing_shares_by_resource(path)
+            public_shares, _ = cm.list_existing_public_shares_by_resource(path)
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+        shares_list = [
+            MessageToDict(s, preserving_proto_field_name=True)
+            for s in shares
+        ]
+        public_shares_list = [
+            MessageToDict(s, preserving_proto_field_name=True)
+            for s in public_shares
+        ]
+        self.set_header("Content-Type", "application/json")
+        self.write({"shares": shares_list, "public_shares": public_shares_list})
+
+class FindUsersHandler(APIHandler):
+    """
+    Handler for finding users.
+    :query search: The query string for TYPE_QUERY filter.
+    :field user_type: The user type for TYPE_USER_TYPE filter. Supported types: USER_TYPE_PRIMARY,
+        USER_TYPE_SECONDARY, USER_TYPE_SERVICE, USER_TYPE_GUEST, USER_TYPE_FEDERATED, USER_TYPE_LIGHTWEIGHT,
+        USER_TYPE_SPACE_OWNER.
+    """
+    @web.authenticated
+    async def get(self):
+        search = self.get_query_argument("search", default="")
+        user_type = self.get_query_argument("type", default=None)
+        cm = self.contents_manager
+        try:
+            users = cm.find_users(search, user_type=user_type)
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+        users_list = [
+            MessageToDict(s, preserving_proto_field_name=True)
+            for s in users
+        ]
+        self.set_header("Content-Type", "application/json")
+        self.write({"search": search, "items": users_list})
+
+class FindGroupsHandler(APIHandler):
+    """
+    Handler for finding groups.
+    :query search: The query string for TYPE_QUERY filter.
+    """
+    @web.authenticated
+    async def get(self):
+        search = self.get_query_argument("search", default="")
+        cm = self.contents_manager
+        try:
+            # We don't use GROUP_TYPE_FEDERATED, all groups are regular groups.
+            groups = cm.find_groups(search, "GROUP_TYPE_REGULAR")
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+        groups_list = [
+            MessageToDict(s, preserving_proto_field_name=True)
+            for s in groups
+        ]
+        self.set_header("Content-Type", "application/json")
+        self.write({"search": search, "items": groups_list})
+
+default_handlers = [
+        (url_path_join("share", "share"), SharesHandler),
+
+        (url_path_join("share", "link"), LinkHandler),
+
+        (url_path_join("share", "getSharedByMe"), SharedByMeHandler),
+
+        (url_path_join("share", "getSharedWithMe"), SharedWithMeHandler),
+
+        (url_path_join("share", "getSharedByResource"), SharedByResourceHandler),
+
+        (url_path_join("find", "users"), FindUsersHandler),
+        (url_path_join("find", "groups"), FindGroupsHandler),
+]
