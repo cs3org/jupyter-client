@@ -1,0 +1,518 @@
+"""
+CS3 Operating System Interface
+
+This module provides a CS3-based implementation of common file system operations
+to replace standard library functions like os, shutil, etc. with CS3 storage operations.
+
+Authors: Rasmus Welander.
+Emails: rasmus.oscar.welander@cern.ch.
+"""
+
+import base64
+import configparser
+import logging
+import os
+import stat
+import time
+from .statuscodehandler import StatusCodeHandler
+from contextlib import contextmanager
+from typing import Generator, List, Optional, Tuple, Union
+from tornado import web
+
+
+from cs3client.cs3client import CS3Client
+from cs3client.auth import Auth
+from cs3client.cs3resource import Resource
+import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
+
+
+class StatResult:
+    def __init__(self, info) -> None:
+        """Initialize StatResult from CS3 resource info."""
+        # size is needed for jupyter
+        self.st_size = getattr(info, 'size', 0)
+
+        if hasattr(info, 'mtime') and info.mtime:
+            self.st_mtime = float(info.mtime.seconds)
+            if hasattr(info.mtime, 'nanos'):
+                self.st_mtime += info.mtime.nanos / 1e9
+        else:
+            self.st_mtime = time.time()
+
+        # mtime and ctime are needed for jupyter
+        self.st_ctime = int(self.st_mtime)
+        self.st_mtime = int(self.st_mtime)
+
+        # type is needed for jupyter
+        if hasattr(info, 'type'):
+            if info.type == cs3spr.ResourceType.RESOURCE_TYPE_CONTAINER:
+                self.st_mode = stat.S_IFDIR | 0o755
+            elif info.type == cs3spr.ResourceType.RESOURCE_TYPE_FILE:
+                self.st_mode = stat.S_IFREG | 0o644
+            elif info.type == cs3spr.ResourceType.RESOURCE_TYPE_SYMLINK:
+                self.st_mode = stat.S_IFLNK | 0o777
+            else:
+                self.st_mode = stat.S_IFREG | 0o644
+        else:
+            self.st_mode = stat.S_IFREG | 0o644
+
+
+class CS3FileSystem:
+    """
+    CS3-based file system operations that can replace standard library functions.
+
+    This class provides implementations for file operations using CS3 storage
+    instead of the local file system.
+    """
+
+    def __init__(self, cs3config: configparser.ConfigParser, token: str, root_path: str) -> None:
+        """
+        Initialize CS3 file system interface.
+
+        Args:
+            config: CS3 configuration parser
+            token: Existing CS3 token
+        """
+        self.log = logging.getLogger(__name__)
+        self.status_handler = StatusCodeHandler()
+        self.root_path = root_path
+
+        # Initialize CS3 client
+        self.client = CS3Client(cs3config, "cs3client", self.log)
+        self.secret = token
+
+    def _resource_from_path(self, path: str) -> Resource:
+        """Convert path to CS3 Resource object."""
+        return Resource(abs_path=path)
+
+    @contextmanager
+    def open(self, path: str, mode: str = 'r', encoding: Optional[str] = None, **kwargs) -> Generator['CS3File', None, None]:
+        """Context manager for opening CS3 files."""
+        cs3_file = CS3File(self, path, mode, encoding)
+        cs3_file._init()
+        try:
+            yield cs3_file
+        finally:
+            cs3_file.close()
+
+    def exists(self, path: str) -> bool:
+        """Check if path exists."""
+        try:
+            resource = self._resource_from_path(path)
+            result = self.client.file.stat(
+                Auth.check_token(self.secret),
+                resource
+            )
+            return result is not None
+        except Exception as e:
+            return False
+
+    def is_file(self, path: str) -> bool:
+        """Check if path is a file."""
+        try:
+            resource = self._resource_from_path(path)
+            result = self.client.file.stat(
+                Auth.check_token(self.secret),
+                resource
+            )
+            if result is None:
+                return False
+
+            is_file = hasattr(result, 'type') and result.type == cs3spr.ResourceType.RESOURCE_TYPE_FILE
+            return is_file
+        except Exception:
+            return False
+
+    def is_dir(self, path: str) -> bool:
+        """Check if path is a directory."""
+        try:
+            resource = self._resource_from_path(path)
+            result = self.client.file.stat(
+                Auth.check_token(self.secret),
+                resource
+            )
+            if result is None:
+                return False
+            return result.type == cs3spr.ResourceType.RESOURCE_TYPE_CONTAINER
+        except Exception:
+            return False
+
+    def is_abs(self, path: str) -> bool:
+        """Check if path is absolute."""
+        return path.startswith(self.root_path)
+
+    def abs_path(self, path: str) -> str:
+        return path
+
+    def list_dir(self, path: str) -> List[Tuple[str, 'StatResult']]:
+        """List directory contents with stat information in one call."""
+        resource = self._resource_from_path(path)
+        try:
+            result = self.client.file.list_dir(
+                Auth.check_token(self.secret),
+                resource
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+        items = []
+        for item in result:
+            if hasattr(item, 'name'):
+                stat_result = StatResult(item)
+                items.append((item.name, stat_result))
+
+        return items
+
+    def mkdir(self, path: str) -> None:
+        """Create directory."""
+        try:
+            resource = self._resource_from_path(path)
+            self.client.file.make_dir(
+                Auth.check_token(self.secret),
+                resource
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+    def unlink(self, path: str) -> None:
+        """Remove file."""
+        try:
+            resource = self._resource_from_path(path)
+            self.client.file.remove_file(
+                Auth.check_token(self.secret),
+                resource
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+    def rename(self, src: str, dst: str) -> None:
+        """Rename file or directory."""
+        try:
+            src_resource = self._resource_from_path(src)
+            dst_resource = self._resource_from_path(dst)
+            self.client.file.rename_file(
+                Auth.check_token(self.secret),
+                src_resource,
+                dst_resource
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+    def lstat(self, path: str) -> 'StatResult':
+        """Get file stats."""
+        try:
+            resource = self._resource_from_path(path)
+            result = self.client.file.stat(
+                Auth.check_token(self.secret),
+                resource
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+        return StatResult(result)
+
+    def access(self, path: str, mode: int) -> bool:
+        """Check file access permissions."""
+        try:
+            resource = self._resource_from_path(path)
+            result = self.client.file.stat(
+                Auth.check_token(self.secret),
+                resource
+            )
+            return result is not None
+        except PermissionError:
+            return False
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+    def _read_file(self, path: str, format: Optional[str] = None, raw: bool = False) -> Union[Tuple[Union[str, bytes], str], Tuple[Union[str, bytes], str, bytes]]:
+        """Read a file with CS3."""
+
+        try:
+            resource = self._resource_from_path(path)
+            result = self.client.file.read_file(
+                Auth.check_token(self.secret),
+                resource
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+        # Collect all chunks
+        bcontent = b''
+        for chunk in result:
+            if isinstance(chunk, Exception):
+                raise chunk
+            bcontent += chunk
+
+        if format == "byte":
+            return (bcontent, "byte", bcontent) if raw else (bcontent, "byte")
+
+        if format is None or format == "text":
+            try:
+                text_content = bcontent.decode("utf8")
+                return (text_content, "text", bcontent) if raw else (text_content, "text")
+            except UnicodeError as e:
+                if format == "text":
+                    raise web.HTTPError(400, "Cannot decode file, file type may not be supported: %s" % path)
+        # Fall back to base64
+        b64_content = base64.encodebytes(bcontent).decode("ascii")
+        return (b64_content, "base64", bcontent) if raw else (b64_content, "base64")
+
+    def _save_file(self, path: str, content: Union[str, bytes], format: str) -> None:
+        """Save a file with CS3."""
+        try:
+            if format == "text":
+                bcontent = content.encode("utf8")
+            else:
+                b64_bytes = content.encode("ascii")
+                bcontent = base64.decodebytes(b64_bytes)
+        except Exception as e:
+            return self.status_handler.handle_errors(e)
+        resource = self._resource_from_path(path)
+        try:
+            self.client.file.write_file(
+                Auth.check_token(self.secret),
+                resource,
+                bcontent,
+                len(bcontent)
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+    def _get_dir_size(self, path: str) -> int:
+        """Calculate total size of directory and subdirectories using CS3 stat."""
+        try:
+            resource = self._resource_from_path(path)
+            try:
+                result = self.client.file.stat(
+                    Auth.check_token(self.secret),
+                    resource
+                )
+            except Exception as e:
+                self.status_handler.handle_errors(e)
+
+            # Get stat info which includes tree_size in opaque metadata
+            stat_result = StatResult(result)
+
+            # If it's a file, return its size
+            if stat_result.st_mode & stat.S_IFREG:
+                return stat_result.st_size
+
+            # For directories, try to get tree_size from opaque metadata
+            if result and hasattr(result, 'opaque') and result.opaque:
+                # Look for EOS metadata with tree_size
+                for key, value in result.opaque.map.items():
+                    if key == "eos" and value.decoder == "json":
+                        import json
+                        try:
+                            eos_data = json.loads(value.value.decode('utf-8'))
+                            if 'tree_size' in eos_data:
+                                return int(eos_data['tree_size'])
+                        except (json.JSONDecodeError, KeyError, ValueError):
+                            pass
+
+            # Fallback to directory size (not including subdirectories)
+            return stat_result.st_size
+
+        except Exception as e:
+            self.log.warning(f"Error calculating directory size for {path}: {e}")
+            return 0
+
+    async def copyfile(self, src: str, dst: str) -> None:
+        """Copy file contents using streaming to avoid loading entire file in memory."""
+        src_resource = self._resource_from_path(src)
+        dst_resource = self._resource_from_path(dst)
+
+        try:
+            # Get the source file size first
+            stat = self.client.file.stat(
+                Auth.check_token(self.secret),
+                src_resource
+            )
+
+            file_size = stat.size
+
+            # Get the content generator
+            content_generator = self.client.file.read_file(
+                Auth.check_token(self.secret),
+                src_resource
+            )
+
+            # Stream write
+            self._write_file_streamed(dst_resource, content_generator, file_size)
+
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+    def _write_file_streamed(self, resource: Resource, content_generator: Generator[bytes, None, None], size: int) -> None:
+        """Write a file using streaming to avoid loading entire content in memory."""
+        try:
+            self.client.file.write_file(
+                Auth.check_token(self.secret),
+                resource,
+                content_generator,  # Pass generator directly
+                size
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+    async def copy_tree(self, src: str, dst: str) -> None:
+        """Copy directory tree."""
+        self.mkdir(dst)
+        dir_contents = self.list_dir(src)
+        for dir_name, _ in dir_contents:
+            src_path = os.path.join(src, dir_name)
+            dst_path = os.path.join(dst, dir_name)
+
+            if self.is_dir(src_path):
+                await self.copy_tree(src_path, dst_path)
+            else:
+                await self.copyfile(src_path, dst_path)
+
+    def rm_tree(self, path: str) -> None:
+        """Remove directory tree."""
+        if self.is_dir(path):
+            self.unlink(path)
+
+    # Jupyter core utils
+    def ensure_dir_exists(self, path: str) -> None:
+        """Ensure directory exists."""
+        if not self.exists(path):
+            parent = os.path.dirname(path)
+            # Ensure parent directory exists
+            if parent and not self.exists(parent):
+                self.ensure_dir_exists(parent)
+            self.mkdir(path)
+
+    def list_file_versions(self, path: str) -> Generator["FileVersion", any, any]:
+        """List file versions"""
+        try:
+            resource = self._resource_from_path(path)
+            result = self.client.checkpoint.list_file_versions(
+                Auth.check_token(self.secret),
+                resource
+            )
+            return result if result is not None else []
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+            return []
+
+    def restore_file_version(self, path: str, key: str) -> None:
+        """Restore a file version."""
+        try:
+            resource = self._resource_from_path(path)
+            self.client.checkpoint.restore_file_version(
+                Auth.check_token(self.secret),
+                resource,
+                key
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+class CS3File:
+    """File-like object for CS3 storage with proper context manager support."""
+
+    def __init__(self, cs3_fs: CS3FileSystem, path: str, mode: str = 'r', encoding: Optional[str] = None) -> None:
+        self.cs3_fs = cs3_fs
+        self.path = path
+        self.mode = mode
+        self.encoding = encoding or 'utf-8'
+        self._content: Union[str, bytes, None] = None
+        self._position = 0
+        self._closed = False
+        self._modified = False
+
+    def _init(self) -> None:
+        """Initialization after creation."""
+        # Load content if reading
+        if 'r' in self.mode or 'a' in self.mode:
+            self._load_content()
+        else:
+            self._content = b'' if 'b' in self.mode else ''
+
+    def _load_content(self) -> None:
+        """Load file content from CS3."""
+        try:
+            if 'b' in self.mode:
+                result = self.cs3_fs._read_file(self.path, "byte")
+                self._content = result[0]
+            else:
+                result = self.cs3_fs._read_file(self.path, "text")
+                self._content = result[0]
+        except Exception as e:
+            if 'r' in self.mode:
+                raise
+            self._content = b'' if 'b' in self.mode else ''
+
+    def read(self, size: int = -1) -> Union[str, bytes]:
+        """Read from file."""
+        if self._closed:
+            raise ValueError("I/O operation on closed file")
+
+        if size == -1:
+            result = self._content[self._position:]
+            self._position = len(self._content)
+        else:
+            result = self._content[self._position:self._position + size]
+            self._position += len(result)
+
+        return result
+
+    def write(self, data: Union[str, bytes]) -> int:
+        """Write to file."""
+        if self._closed:
+            raise ValueError("I/O operation on closed file")
+
+        if 'r' in self.mode and 'w' not in self.mode and 'a' not in self.mode:
+            raise OSError("File not open for writing")
+
+        if isinstance(data, str) and 'b' in self.mode:
+            data = data.encode(self.encoding)
+        elif isinstance(data, bytes) and 'b' not in self.mode:
+            data = data.decode(self.encoding)
+
+        if 'a' in self.mode:
+            self._content += data
+        else:
+            self._content = self._content[:self._position] + data + self._content[self._position + len(data):]
+            self._position += len(data)
+
+        self._modified = True
+        return len(data)
+
+    def flush(self) -> None:
+        """Flush to CS3 storage."""
+        if self._closed or not self._modified:
+            return
+
+        if 'w' in self.mode or 'a' in self.mode:
+            if isinstance(self._content, str):
+                format = "text"
+                content = self._content
+            else:
+                format = "base64"
+                content = base64.encodebytes(self._content).decode("ascii")
+
+            self.cs3_fs._save_file(self.path, content, format)
+            self._modified = False
+
+    def close(self) -> None:
+        """Close file."""
+        if not self._closed:
+            self.flush()
+            self._closed = True
+
+    def __enter__(self) -> 'CS3File':
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        self.close()
+
+    def fileno(self) -> int:
+        """Get file descriptor (not applicable for CS3)."""
+        raise NotImplementedError("File descriptors not supported in CS3")
+
+# Convenience function to create a global CS3 file system instance
+def create_cs3_filesystem(config, token, root_path) -> CS3FileSystem:
+    """Create a CS3FileSystem instance."""
+    cs3_fs = CS3FileSystem(config, token, root_path)
+    return cs3_fs
