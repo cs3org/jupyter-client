@@ -56,6 +56,15 @@ class StatResult:
                 self.st_mode = stat.S_IFREG | 0o644
         else:
             self.st_mode = stat.S_IFREG | 0o644
+        # All resources do not have the permissions_set attribute, but
+        # if a resource doesn't have this attribute it can't be writeable.
+        if hasattr(info, 'permission_set'):
+            if info.permission_set.create_container == True or info.permission_set.delete == True:
+                self.writeable = True
+            else:
+                self.writeable = False
+        else:
+            self.writeable = False
 
 
 class CS3FileSystem:
