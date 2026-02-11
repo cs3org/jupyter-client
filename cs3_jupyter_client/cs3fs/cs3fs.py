@@ -166,9 +166,12 @@ class CS3FileSystem:
             self.status_handler.handle_errors(e)
         items = []
         for item in result:
-            if hasattr(item, 'name'):
-                stat_result = StatResult(item)
-                items.append((item.name, stat_result))
+            stat_result = StatResult(item)
+            # item.path should be the full path
+            # but jupyter expects just the name
+            # so we extract the name from the path
+            name = item.path.split("/")[-1]
+            items.append((name, stat_result))
 
         return items
 
