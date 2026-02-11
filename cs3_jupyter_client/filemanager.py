@@ -5,8 +5,12 @@
 from __future__ import annotations
 
 import os
+import errno
+import os
+import stat
 
 from jupyter_core.utils import run_sync
+from jupyter_server import _tz as tz
 from anyio.to_thread import run_sync
 from tornado import web
 from traitlets import default, validate
@@ -109,6 +113,80 @@ class CS3FileContentsManager(CS3FileManagerMixin):
             self.log.debug("Unlinking file %s", os_path)
             with self.perm_to_403():
                 await run_sync(self.unlink, os_path)
+
+    async def _dir_model(self, path, content=True):
+        """Build a model for a directory
+
+        if content is requested, will include a listing of the directory
+        """
+        os_path = self._get_os_path(path)
+
+        four_o_four = "directory does not exist: %r" % path
+        ## Replaced os.path.isdir
+        if not self.is_dir(os_path):
+            raise web.HTTPError(404, four_o_four)
+        ## replaced is_hidden with implementation above
+        elif not self.allow_hidden and is_hidden(os_path, self.root_dir):
+            self.log.info("Refusing to serve hidden directory %r, via 404 Error", os_path)
+            raise web.HTTPError(404, four_o_four)
+
+        model = self._base_model(path)
+        model["type"] = "directory"
+        model["size"] = None
+        if content:
+            model["content"] = contents = []
+            os_dir = self._get_os_path(path)
+            ## replaced os.listdir
+            dir_contents = await run_sync(self.list_dir, os_dir)
+
+            for dir_name, stat_info in dir_contents:
+                try:
+                    os_path = os.path.join(os_dir, dir_name)
+                except UnicodeDecodeError as e:
+                    # skip over broken symlinks in listing
+                    if e.errno == errno.ENOENT:
+                        self.log.warning("%s doesn't exist", os_path)
+                    elif e.errno != errno.EACCES:  # Don't provide clues about protected files
+                        self.log.warning("Error stat-ing %s: %r", os_path, e)
+                    continue
+
+                if (
+                    not stat.S_ISLNK(stat_info.st_mode)
+                    and not stat.S_ISREG(stat_info.st_mode)
+                    and not stat.S_ISDIR(stat_info.st_mode)
+                ):
+                    self.log.debug("%s not a regular file", os_path)
+                    continue
+
+                try:
+                    if self.should_list(dir_name) and (
+                        ## replaced is_file_hidden with implementation above class
+                        self.allow_hidden or not is_file_hidden(os_path, stat_res=stat_info)
+                    ):
+                        resource_model = {
+                            "name": dir_name,
+                            "path": f"{path}/{dir_name}",
+                            "last_modified": tz.utcfromtimestamp(stat_info.st_mtime),
+                            "created": tz.utcfromtimestamp(stat_info.st_ctime),
+                            "size": stat_info.st_size,
+                            "writable": stat_info.writeable,
+                        }
+
+                        if stat.S_ISDIR(stat_info.st_mode):
+                            resource_model["type"] = "directory"
+                        contents.append(resource_model)
+                except OSError as e:
+                    # ELOOP: recursive symlink, also don't show failure due to permissions
+                    if e.errno not in [errno.ELOOP, errno.EACCES]:
+                        self.log.warning(
+                            "Unknown error checking if file %r is hidden",
+                            os_path,
+                            exc_info=True,
+                        )
+
+            model["format"] = "json"
+
+        return model
 
     # Upstream uses AsyncContentsManager.copy which makes it is impossible to
     # to replace the os function in the super class (AsyncContentsManager - manager.py)
