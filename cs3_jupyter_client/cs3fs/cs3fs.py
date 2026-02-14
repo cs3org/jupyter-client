@@ -102,7 +102,7 @@ class CS3FileSystem:
         return Resource(abs_path=path)
 
     @contextmanager
-    def open(self, path: str, mode: str = 'r', encoding: Optional[str] = None, **kwargs) -> Generator['CS3File', None, None]:
+    def cs3open(self, path: str, mode: str = 'r', encoding: Optional[str] = None, **kwargs) -> Generator['CS3File', None, None]:
         """Context manager for opening CS3 files."""
         cs3_file = CS3File(self, path, mode, encoding)
         cs3_file._init()
@@ -192,6 +192,12 @@ class CS3FileSystem:
         except Exception as e:
             self.status_handler.handle_errors(e)
 
+    # Alias for rmdir, because jupyter uses it
+    def rmdir(self, path: str) -> None:
+        """Remove directory."""
+        return self.unlink(path)
+
+
     def unlink(self, path: str) -> None:
         """Remove file."""
         try:
@@ -202,6 +208,10 @@ class CS3FileSystem:
             )
         except Exception as e:
             self.status_handler.handle_errors(e)
+
+    def move(self, src: str, dst: str) -> None:
+        """Move file or directory."""
+        self.rename(src, dst)
 
     def rename(self, src: str, dst: str) -> None:
         """Rename file or directory."""
@@ -256,7 +266,7 @@ class CS3FileSystem:
         except Exception as e:
             self.status_handler.handle_errors(e)
 
-    def _read_file(self, path: str, format: Optional[str] = None, raw: bool = False) -> Union[Tuple[Union[str, bytes], str], Tuple[Union[str, bytes], str, bytes]]:
+    def read_file(self, path: str, format: Optional[str] = None, raw: bool = False) -> Union[Tuple[Union[str, bytes], str], Tuple[Union[str, bytes], str, bytes]]:
         """Read a file with CS3."""
 
         try:
@@ -310,7 +320,7 @@ class CS3FileSystem:
         except Exception as e:
             self.status_handler.handle_errors(e)
 
-    def _get_dir_size(self, path: str) -> int:
+    def get_dir_size(self, path: str) -> int:
         """Calculate total size of directory and subdirectories using CS3 stat."""
         try:
             resource = self._resource_from_path(path)

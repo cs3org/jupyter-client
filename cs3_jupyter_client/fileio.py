@@ -30,6 +30,13 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
     Mixin for ContentsAPI classes that interact with the filesystem asynchronously.
     """
 
+    @contextmanager
+    def open(self, os_path, *args, **kwargs):
+        """wrapper around io.open that turns permission errors into 403"""
+        with self.perm_to_403(os_path), self.cs3open(os_path, *args, **kwargs) as f:
+            yield f
+
+
     # Moved from "FileManagerMixin (we only use the Async version)"
     @contextmanager
     def perm_to_403(self, os_path=""):
@@ -113,7 +120,7 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
     def writing(self, path: str, text: bool = True, encoding: str = "utf-8", **kwargs) -> Generator['CS3File', None, None]:
         """Context manager for writing to CS3."""
         mode = "w" if text else "wb"
-        with self.open(path, mode, encoding) as f:
+        with self.open(path, mode, encoding=encoding) as f:
             yield f
 
     # Replaced atomic writing since we let reva handle this

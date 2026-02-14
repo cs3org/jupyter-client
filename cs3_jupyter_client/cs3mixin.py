@@ -138,19 +138,13 @@ class CS3Mixin(LoggingConfigurable):
         return self._get_cs3_fs_indep()
 
     def __getattr__(self, name: str):
-        no_proxy = {
-            "cs3_fs", "_get_cs3_fs_indep", "_read_token_file", "_create_cs3_config",
-            "_config", "_user_path", "log", "token_path", "cs3_token", "root_path", "client_id",
-        }
-        # Don't proxy these attributes
-        if name in no_proxy or name.startswith("_"):
-            raise AttributeError(name)
 
-        # Get cs3_fs without triggering __getattr__ again
-        cs3_fs = object.__getattribute__(self, "cs3_fs")
+        # Don't proxy private attributes (starting with _) to avoid recursion
+        if name.startswith('_'):
+            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
 
-        # Delegate; if cs3_fs doesn't have it, let AttributeError propagate
-        target = getattr(cs3_fs, name)
+        # Delegate to cs3_fs
+        target = getattr(self.cs3_fs, name)
 
         if not callable(target):
             return target
@@ -162,10 +156,9 @@ class CS3Mixin(LoggingConfigurable):
                 try:
                     return await target(*args, **kwargs)
                 except PermissionError as e:
-                    log = object.__getattribute__(self, "log")
-                    log.error(f"cs3mixin: {name.upper()} AUTH ERROR - {e}, reading token and retrying...")
-                    object.__getattribute__(self, "_read_token_file")()
-                    return await getattr(object.__getattribute__(self, "cs3_fs"), name)(*args, **kwargs)
+                    self.log.error(f"cs3mixin: {name.upper()} AUTH ERROR - {e}, reading token and retrying...")
+                    self._read_token_file()
+                    return await getattr(self.cs3_fs, name)(*args, **kwargs)
             return async_wrapped
 
         @wraps(target)
@@ -173,8 +166,7 @@ class CS3Mixin(LoggingConfigurable):
             try:
                 return target(*args, **kwargs)
             except PermissionError as e:
-                log = object.__getattribute__(self, "log")
-                log.error(f"cs3mixin: {name.upper()} AUTH ERROR - {e}, reading token and retrying...")
-                object.__getattribute__(self, "_read_token_file")()
-                return getattr(object.__getattribute__(self, "cs3_fs"), name)(*args, **kwargs)
+                self.log.error(f"cs3mixin: {name.upper()} AUTH ERROR - {e}, reading token and retrying...")
+                self._read_token_file()
+                return getattr(self.cs3_fs, name)(*args, **kwargs)
         return wrapped
