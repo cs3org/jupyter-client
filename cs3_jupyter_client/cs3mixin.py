@@ -140,7 +140,7 @@ class CS3Mixin(LoggingConfigurable):
     def __getattr__(self, name: str):
         no_proxy = {
             "cs3_fs", "_get_cs3_fs_indep", "_read_token_file", "_create_cs3_config",
-            "_config", "_user_path", "log", "token_path", "cs3_token", "root_path", "client_id",
+            "_config", "_user_path", "log", "token_path", "cs3_token", "root_path", "client_id"
         }
         # Don't proxy these attributes
         if name in no_proxy or name.startswith("_"):

@@ -33,7 +33,7 @@ class UpstreamLargeFileManager(UpstreamFileManager):
 
         with self.perm_to_403(os_path):
             ## This part is replaced to use cs3mixin open and write
-            with self.open(os_path, "ab") as f:  # noqa: ASYNC101
+            with self.cs3open(os_path, "ab") as f:  # noqa: ASYNC101
                 await run_sync(f.write, bcontent)
         """
         Original upstream code:
