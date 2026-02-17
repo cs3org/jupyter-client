@@ -223,6 +223,19 @@ class CS3FileSystem:
 
         return StatResult(result)
 
+    def get_quota(self, path: str) -> 'QuotaResponse':
+        """Get resource quota."""
+        try:
+            resource = self._resource_from_path(path)
+            result = self.client.file.get_quota(
+                Auth.check_token(self.secret),
+                resource
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+        return result
+
     def access(self, path: str, mode: int) -> bool:
         """Check file access permissions."""
         try:
