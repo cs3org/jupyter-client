@@ -70,6 +70,7 @@ c.CS3FileManagerMixin.authtokenvalidity = 3600
 c.CS3FileManagerMixin.lock_not_impl = False
 c.CS3FileManagerMixin.lock_as_attr = False
 c.CS3FileManagerMixin.root_path = '/eos/user/r/rwelande'
+c.CS3FileManagerMixin.client_id = 'rwelande'
 c.CS3LargeFileManager.max_copy_folder_size_mb = 500
 ```
 
