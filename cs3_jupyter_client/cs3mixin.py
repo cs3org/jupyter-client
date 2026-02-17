@@ -81,6 +81,12 @@ class CS3Mixin(LoggingConfigurable):
         help="CS3 authentication token"
     )
 
+    client_id = Unicode(
+        default_value="",
+        config=True,
+        help="CS3 client ID (can be set in config)"
+    )
+
     def get_user_path(self):
         """Get the user path for CS3 operations."""
         return self._user_path
@@ -120,8 +126,9 @@ class CS3Mixin(LoggingConfigurable):
         """
         return create_cs3_filesystem(
             self._config,
-            self.cs3_token,
-            self.root_path
+            self.root_path,
+            client_secret=self.cs3_token,
+            client_id=self.client_id,
         )
 
     @property
@@ -133,7 +140,7 @@ class CS3Mixin(LoggingConfigurable):
     def __getattr__(self, name: str):
         no_proxy = {
             "cs3_fs", "_get_cs3_fs_indep", "_read_token_file", "_create_cs3_config",
-            "_config", "_user_path", "log", "token_path", "cs3_token", "root_path",
+            "_config", "_user_path", "log", "token_path", "cs3_token", "root_path", "client_id",
         }
         # Don't proxy these attributes
         if name in no_proxy or name.startswith("_"):
