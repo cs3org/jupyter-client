@@ -25,7 +25,7 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
     Mixin for ContentsAPI classes that interact with the filesystem asynchronously.
     """
 
-    # Moved from "FileManagerMixin (we only use the Async version)"  
+    # Moved from "FileManagerMixin (we only use the Async version)"
     @contextmanager
     def perm_to_403(self, os_path=""):
         """context manager for turning permission errors into 403."""
@@ -146,7 +146,7 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
         """
         if not self.is_file(os_path):
             raise HTTPError(404, f"File not found: {os_path}")
-        
+
         return self.read_file(os_path, format, raw)
 
     # replaced atomic writing since we let reva handle this

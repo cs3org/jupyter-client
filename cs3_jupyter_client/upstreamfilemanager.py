@@ -15,7 +15,7 @@ from jupyter_server import _tz as tz
 from jupyter_server.services.contents.filemanager import AsyncFileContentsManager, FileContentsManager
 
 # Note this is an import from our own file - these functions/methods HAVE to overload the upstream equivalents
-from .filemanager import  is_file_hidden, is_hidden, naive_same_file
+from .filemanager import  is_hidden, naive_same_file
 
 '''
 These are modifications to the upstream Jupyter FileManager to handle large file uploads
@@ -129,7 +129,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
             )
         self.emit(data={"action": "get", "path": path})
         return model
-    
+
     async def _save_directory(self, os_path, model, path=""):
         """create a directory"""
         ## replaced is_hidden with implementation above class
@@ -145,7 +145,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
             raise web.HTTPError(400, "Not a directory: %s" % (os_path))
         else:
             self.log.debug("Directory %r already exists", os_path)
-    
+
     async def rename_file(self, old_path, new_path):
         """Rename a file."""
         old_path = old_path.strip("/")
@@ -155,7 +155,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
 
         new_os_path = self._get_os_path(new_path)
         old_os_path = self._get_os_path(old_path)
-        
+
         ## replaced is_hidden with implementation above class
         if not self.allow_hidden and (
             is_hidden(old_os_path, self.root_dir) or is_hidden(new_os_path, self.root_dir)
@@ -165,7 +165,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
         ## replaced os.path.exists (now async) and samefile
         if await self.exists(new_os_path) and not naive_same_file(old_os_path, new_os_path):
             raise web.HTTPError(409, "File already exists: %s" % new_path)
-        
+
         try:
             with self.perm_to_403():
                 ## replaced shutil.move
@@ -174,7 +174,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
             raise
         except Exception as e:
             raise web.HTTPError(500, f"Unknown error renaming file: {old_path} {e}") from e
-        
+
     async def _copy_dir(
         self, from_path: str, to_path_original: str, to_name: str, to_path: str
     ) -> dict[str, t.Any]:
@@ -196,21 +196,21 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
             ) from err
 
         return model  # type:ignore[no-any-return]
-    
+
     async def dir_exists(self, path):
         """Does a directory exist at the given path"""
         path = path.strip("/")
         os_path = self._get_os_path(path=path)
         ## replaced os.path.isdir
         return self.is_dir(os_path)
-    
+
     async def file_exists(self, path):
         """Does a file exist at the given path"""
         path = path.strip("/")
         os_path = self._get_os_path(path)
         ## replaced os.path.isfile
         return self.is_file(os_path)
-    
+
 
     # Function replaced - upstream uses jupyter.core.paths.exists which uses os.path.exists
     async def exists(self, path):
