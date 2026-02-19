@@ -8,7 +8,6 @@ import os
 import errno
 import stat
 
-from jupyter_core.utils import run_sync
 from jupyter_server import _tz as tz
 from anyio.to_thread import run_sync
 from tornado import web

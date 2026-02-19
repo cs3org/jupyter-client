@@ -59,7 +59,7 @@ class StatResult:
         # All resources do not have the permissions_set attribute, but
         # if a resource doesn't have this attribute it can't be writeable.
         if hasattr(info, 'permission_set'):
-            if info.permission_set.create_container == True or info.permission_set.delete == True:
+            if info.permission_set.create_container or info.permission_set.delete:
                 self.writeable = True
             else:
                 self.writeable = False
@@ -223,7 +223,7 @@ class CS3FileSystem:
 
         return StatResult(result)
 
-    def get_quota(self, path: str) -> 'QuotaResponse':
+    def get_quota(self, path: str) -> 'QuotaResponse':  # noqa: F821
         """Get resource quota."""
         try:
             resource = self._resource_from_path(path)
@@ -276,9 +276,9 @@ class CS3FileSystem:
             try:
                 text_content = bcontent.decode("utf8")
                 return (text_content, "text", bcontent) if raw else (text_content, "text")
-            except UnicodeError:
+            except UnicodeError as e:
                 if format == "text":
-                    raise web.HTTPError(400, "Cannot decode file, file type may not be supported: %s" % path)
+                    raise web.HTTPError(400, "Cannot decode file, file type may not be supported: %s" % path) from e
         # Fall back to base64
         b64_content = base64.encodebytes(bcontent).decode("ascii")
         return (b64_content, "base64", bcontent) if raw else (b64_content, "base64")
@@ -409,7 +409,7 @@ class CS3FileSystem:
                 self.ensure_dir_exists(parent)
             self.mkdir(path)
 
-    def list_file_versions(self, path: str) -> Generator["FileVersion", any, any]:
+    def list_file_versions(self, path: str) -> Generator["FileVersion", any, any]:  # noqa: F821
         """List file versions"""
         try:
             resource = self._resource_from_path(path)
