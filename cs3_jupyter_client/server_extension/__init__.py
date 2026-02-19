@@ -3,9 +3,6 @@ from .sharing import default_handlers
 from jupyter_server.utils import url_path_join
 
 
-def _jupyter_server_extension_points():
-    return [{"module": "cs3_jupyter_client.server_extension"}]
-
 def _load_jupyter_server_extension(serverapp):
     # Called when the extension loads; attach handlers here.
     setup_handlers(serverapp.web_app)
