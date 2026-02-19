@@ -2,6 +2,8 @@
 
 A Jupyter Server Contents Manager implementation that provides seamless integration with CS3 (Cloud Storage Synchronization and Sharing) storage systems. This allows Jupyter environments to directly interact with distributed storage backends that implement the CS3 API, such as CERNBox.
 
+The package also includes a JupyterLab extension that adds CERNBox sidebar panels (Spaces, Shares) and a storage quota indicator to the file browser.
+
 ## Overview
 
 The CS3 Contents Manager extends Jupyter Server's file management capabilities to work with CS3-compatible storage systems. It provides a complete replacement for the default file-based contents manager, enabling users to open, edit, save, and manage notebooks and files stored in remote CS3 storage.
@@ -41,14 +43,46 @@ The CS3 Contents Manager consists of several key components:
    - Specialized handling for large file uploads
    - Chunked transfer support
 
+### JupyterLab Extension
+
+The bundled labextension (`@cs3org/cs3-jupyter-client`) provides three plugins:
+
+- **Spaces** - sidebar panel listing CERNBox Spaces (projects) the user has access to
+- **Shares** - sidebar panel showing incoming and outgoing CERNBox shared folders
+- **Storage Quota** - progress bar at the bottom of the file browser showing storage usage
+
 ## Installation
 
 ### Install from Source
 
 ```bash
 git clone <repository-url>
-cd cs3-contents-manager
+cd jupyter-client
 pip install -e .
+```
+
+### Labextension Development
+
+```bash
+# Create fake EOS directories for testing
+./setup-fake-eos.sh ./fake-eos
+
+# Install the extension (pip install -e . also builds the labextension)
+pip install -e .
+
+# Alternative manual install
+# jlpm install
+# jlpm build
+# jupyter labextension develop . --overwrite
+
+# Verify the extension is loaded
+jupyter labextension list
+
+# Start JupyterLab
+jupyter lab \
+    --ServerApp.root_dir='./fake-eos' \
+    --FileContentsManager.preferred_dir='user/<u>/<user>' \
+    --ServerApp.token=''
 ```
 
 ## Configuration
