@@ -10,7 +10,7 @@ from base64 import decodebytes
 import errno
 import os
 from contextlib import contextmanager
-from typing import Generator
+from typing import Generator, TYPE_CHECKING
 import nbformat
 
 from tornado.web import HTTPError
@@ -19,6 +19,11 @@ from anyio.to_thread import run_sync
 
 from jupyter_server.utils import ApiPath, to_api_path, to_os_path
 from .cs3mixin import CS3Mixin
+
+
+if TYPE_CHECKING:
+    from .cs3fs.cs3fs import CS3File
+
 
 class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
     """

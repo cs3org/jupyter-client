@@ -8,7 +8,6 @@ from __future__ import annotations
 import typing as t
 from datetime import datetime
 
-from jupyter_core.utils import run_sync
 from anyio.to_thread import run_sync
 from tornado import web
 from jupyter_server import _tz as tz
