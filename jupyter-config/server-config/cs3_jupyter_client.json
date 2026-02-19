@@ -1,0 +1,7 @@
+{
+  "ServerApp": {
+    "jpserver_extensions": {
+      "cs3_jupyter_client": true
+    }
+  }
+}
