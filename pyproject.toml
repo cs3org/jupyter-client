@@ -14,11 +14,14 @@ dependencies = [
     "protobuf==6.33.5",
 ]
 
+[dependency-groups]
+dev = [
+    "ruff==0.15.1",
+    "sphinx==7.4.7",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["cs3_jupyter_client"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 "jupyter-config/server-config" = "etc/jupyter/jupyter_server_config.d"
-
-[dependency-groups]
-dev = ["sphinx==7.4.7"]
