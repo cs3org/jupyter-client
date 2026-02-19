@@ -114,7 +114,7 @@ class CS3FileSystem:
                 resource
             )
             return result is not None
-        except Exception as e:
+        except Exception:
             return False
 
     def is_file(self, path: str) -> bool:
@@ -276,7 +276,7 @@ class CS3FileSystem:
             try:
                 text_content = bcontent.decode("utf8")
                 return (text_content, "text", bcontent) if raw else (text_content, "text")
-            except UnicodeError as e:
+            except UnicodeError:
                 if format == "text":
                     raise web.HTTPError(400, "Cannot decode file, file type may not be supported: %s" % path)
         # Fall back to base64
@@ -700,7 +700,7 @@ class CS3File:
             else:
                 result = self.cs3_fs._read_file(self.path, "text")
                 self._content = result[0]
-        except Exception as e:
+        except Exception:
             if 'r' in self.mode:
                 raise
             self._content = b'' if 'b' in self.mode else ''

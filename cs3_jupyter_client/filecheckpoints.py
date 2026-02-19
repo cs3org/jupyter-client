@@ -20,7 +20,7 @@ class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
         return self.get_user_path()
 
     # If available, the CS3 backend/Reva creates checkpoints automatically,
-    # meaning we don't need to create checkpoints and this has no real 
+    # meaning we don't need to create checkpoints and this has no real
     # action except for listing the existing checkpoints.
     async def create_checkpoint(self, contents_mgr, path):
         """Create a checkpoint."""
@@ -41,7 +41,7 @@ class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
         else:
             return self._get_mock_checkpoint(path, contents_mgr)
 
-            
+
 
     # Restore reva checkpoint
     async def restore_checkpoint(self, contents_mgr, checkpoint_id, path):
@@ -49,7 +49,7 @@ class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
         os_path = contents_mgr._get_os_path(path)
         contents_mgr.restore_file_version(os_path, checkpoint_id)
         return None
-    
+
     # No need to construct info dict, reva handles versioning.
     async def checkpoint_model(self, checkpoint_id, os_path):
         """construct the info dict for a given checkpoint"""
@@ -66,7 +66,7 @@ class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
         return None
 
     # Reva handles versioning, so list all versions as checkpoints.
-    # FIXME: we want to decouple this from CS3FileManagerMixin but 
+    # FIXME: we want to decouple this from CS3FileManagerMixin but
     # that would require an extra parameter "contents_mgr" in the function signature.
     async def list_checkpoints(self, path):
         """list the checkpoints for a given file"""
@@ -89,12 +89,12 @@ class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
             # Return a mock checkpoint if no versions exist, otherwise jupyter will panic.
             checkpoints.append(self._get_mock_checkpoint(path, self))
         return checkpoints
-    
+
     # a path for a checkpoint is just the file path in reva
     def checkpoint_path(self, checkpoint_id, path):
         """find the path to a checkpoint"""
         return path
-    
+
     # Copied from SWAN upstream to create a mock checkpoint when no versions exist
     def _get_mock_checkpoint(self, path, contents_mgr):
         src_path = contents_mgr._get_os_path(path=path)

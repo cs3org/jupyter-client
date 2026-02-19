@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import os
 import errno
-import os
 import stat
 
 from jupyter_core.utils import run_sync

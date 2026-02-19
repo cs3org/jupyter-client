@@ -27,7 +27,7 @@ class SharesHandler(APIHandler):
         idp = body.get("idp", "")
         role = body.get("role", "")
         grantee_type = body.get("grantee_type", "USER")
-        
+
         # Reuse client from the contents manager
         cm = self.contents_manager
         self.log.info(f"Creating share for path: {path} to {grantee_type} {opaque_id} with role {role}")
@@ -137,7 +137,7 @@ class LinkHandler(APIHandler):
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
-        
+
         share = MessageToDict(share, preserving_proto_field_name=True)
 
         self.set_status(201)
