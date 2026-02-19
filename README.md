@@ -43,23 +43,6 @@ The CS3 Contents Manager consists of several key components:
 
 ## Installation
 
-### Requirements
-
-```bash
-pip install -r requirements.txt
-```
-
-Required dependencies:
-- `grpcio>=1.47.0`
-- `grpcio-tools>=1.47.0`
-- `cs3apis>=0.1.dev101`
-- `cs3client>=0.1`
-- `pyOpenSSL`
-- `requests`
-- `PyJWT`
-- `protobuf`
-- `cryptography`
-
 ### Install from Source
 
 ```bash
