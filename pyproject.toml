@@ -25,3 +25,17 @@ packages = ["cs3_jupyter_client"]
 
 [tool.hatch.build.targets.wheel.shared-data]
 "jupyter-config/server-config" = "etc/jupyter/jupyter_server_config.d"
+
+[tool.ruff]
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "B", # flake8-bugbear
+    "E", # pycodestyle (errors)
+    "W", # pycodestyle (warnings)
+    "F", # pyflakes
+]
+extend-ignore = [
+    "E501", # line too long
+]
