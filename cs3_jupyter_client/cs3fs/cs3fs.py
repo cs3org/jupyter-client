@@ -75,7 +75,7 @@ class CS3FileSystem:
     instead of the local file system.
     """
 
-    def __init__(self, cs3config: configparser.ConfigParser, token: str, root_path: str) -> None:
+    def __init__(self, cs3config: configparser.ConfigParser, root_path: str, client_secret: str = None, client_id: str = None) -> None:
         """
         Initialize CS3 file system interface.
 
@@ -87,16 +87,22 @@ class CS3FileSystem:
         self.status_handler = StatusCodeHandler()
         self.root_path = root_path
 
+        if not client_id or not client_secret:
+            raise ValueError("Either token or client_secret must be provided for authentication")
         # Initialize CS3 client
         self.client = CS3Client(cs3config, "cs3client", self.log)
-        self.secret = token
+        self.auth = Auth(self.client)
+        # Set the client id (can also be set in the config)
+        self.auth.set_client_id(client_id)
+        # Set client secret (can also be set in config)
+        self.auth.set_client_secret(client_secret)
 
     def _resource_from_path(self, path: str) -> Resource:
         """Convert path to CS3 Resource object."""
         return Resource(abs_path=path)
 
     @contextmanager
-    def open(self, path: str, mode: str = 'r', encoding: Optional[str] = None, **kwargs) -> Generator['CS3File', None, None]:
+    def cs3open(self, path: str, mode: str = 'r', encoding: Optional[str] = None, **kwargs) -> Generator['CS3File', None, None]:
         """Context manager for opening CS3 files."""
         cs3_file = CS3File(self, path, mode, encoding)
         cs3_file._init()
@@ -110,7 +116,7 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             result = self.client.file.stat(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
             return result is not None
@@ -122,7 +128,7 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             result = self.client.file.stat(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
             if result is None:
@@ -138,7 +144,7 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             result = self.client.file.stat(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
             if result is None:
@@ -159,7 +165,7 @@ class CS3FileSystem:
         resource = self._resource_from_path(path)
         try:
             result = self.client.file.list_dir(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
         except Exception as e:
@@ -180,22 +186,32 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             self.client.file.make_dir(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
         except Exception as e:
             self.status_handler.handle_errors(e)
+
+    # Alias for rmdir, because jupyter uses it
+    def rmdir(self, path: str) -> None:
+        """Remove directory."""
+        return self.unlink(path)
+
 
     def unlink(self, path: str) -> None:
         """Remove file."""
         try:
             resource = self._resource_from_path(path)
             self.client.file.remove_file(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
         except Exception as e:
             self.status_handler.handle_errors(e)
+
+    def move(self, src: str, dst: str) -> None:
+        """Move file or directory."""
+        self.rename(src, dst)
 
     def rename(self, src: str, dst: str) -> None:
         """Rename file or directory."""
@@ -203,7 +219,7 @@ class CS3FileSystem:
             src_resource = self._resource_from_path(src)
             dst_resource = self._resource_from_path(dst)
             self.client.file.rename_file(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 src_resource,
                 dst_resource
             )
@@ -215,7 +231,7 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             result = self.client.file.stat(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
         except Exception as e:
@@ -228,7 +244,7 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             result = self.client.file.get_quota(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
         except Exception as e:
@@ -241,7 +257,7 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             result = self.client.file.stat(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
             return result is not None
@@ -250,13 +266,13 @@ class CS3FileSystem:
         except Exception as e:
             self.status_handler.handle_errors(e)
 
-    def _read_file(self, path: str, format: Optional[str] = None, raw: bool = False) -> Union[Tuple[Union[str, bytes], str], Tuple[Union[str, bytes], str, bytes]]:
+    def read_file(self, path: str, format: Optional[str] = None, raw: bool = False) -> Union[Tuple[Union[str, bytes], str], Tuple[Union[str, bytes], str, bytes]]:
         """Read a file with CS3."""
 
         try:
             resource = self._resource_from_path(path)
             result = self.client.file.read_file(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
         except Exception as e:
@@ -296,7 +312,7 @@ class CS3FileSystem:
         resource = self._resource_from_path(path)
         try:
             self.client.file.write_file(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource,
                 bcontent,
                 len(bcontent)
@@ -304,13 +320,13 @@ class CS3FileSystem:
         except Exception as e:
             self.status_handler.handle_errors(e)
 
-    def _get_dir_size(self, path: str) -> int:
+    def get_dir_size(self, path: str) -> int:
         """Calculate total size of directory and subdirectories using CS3 stat."""
         try:
             resource = self._resource_from_path(path)
             try:
                 result = self.client.file.stat(
-                    Auth.check_token(self.secret),
+                    self.auth.get_token(),
                     resource
                 )
             except Exception as e:
@@ -351,7 +367,7 @@ class CS3FileSystem:
         try:
             # Get the source file size first
             stat = self.client.file.stat(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 src_resource
             )
 
@@ -359,7 +375,7 @@ class CS3FileSystem:
 
             # Get the content generator
             content_generator = self.client.file.read_file(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 src_resource
             )
 
@@ -373,7 +389,7 @@ class CS3FileSystem:
         """Write a file using streaming to avoid loading entire content in memory."""
         try:
             self.client.file.write_file(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource,
                 content_generator,  # Pass generator directly
                 size
@@ -414,7 +430,7 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             result = self.client.checkpoint.list_file_versions(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
             return result if result is not None else []
@@ -427,7 +443,7 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             self.client.checkpoint.restore_file_version(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource,
                 key
             )
@@ -440,13 +456,13 @@ class CS3FileSystem:
             resource = self._resource_from_path(path)
             # We need the resource info for creating the share
             resource_info = self.client.file.stat(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
             if resource_info is None:
                 raise web.HTTPError(404, "Resource not found: %s" % path)
             share = self.client.share.create_share(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource_info,
                 opaque_id,
                 idp,
@@ -465,7 +481,7 @@ class CS3FileSystem:
         filter = self.client.share.create_share_filter(filter_type = "TYPE_RESOURCE_ID", resource_id = resource.id)
         try:
             result = self.client.share.list_existing_shares(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 [filter]
             )
             return result if result is not None else []
@@ -479,7 +495,7 @@ class CS3FileSystem:
         filter = self.client.share.create_share_filter(filter_type="TYPE_CREATOR", creator_opaque_id=creator_opaque_id, creator_idp=creator_idp)
         try:
             result = self.client.share.list_existing_shares(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 [filter]
             )
             return result if result is not None else []
@@ -491,7 +507,7 @@ class CS3FileSystem:
         """Remove a share by its ID."""
         try:
             self.client.share.remove_share(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 opaque_id=share_id
             )
         except Exception as e:
@@ -501,7 +517,7 @@ class CS3FileSystem:
         """Update a shares role/display name by using its unique ID."""
         try:
             share = self.client.share.update_share(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 role=role,
                 opaque_id=share_id,
                 display_name=display_name,
@@ -514,7 +530,7 @@ class CS3FileSystem:
         """List existing received shares."""
         try:
             result = self.client.share.list_received_existing_shares(
-                Auth.check_token(self.secret)
+                self.auth.get_token()
             )
             return result if result is not None else []
         except Exception as e:
@@ -529,7 +545,7 @@ class CS3FileSystem:
             state = "SHARE_STATE_REJECTED"
         try:
             self.client.share.update_received_share(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 share_id,
                 state
             )
@@ -543,13 +559,13 @@ class CS3FileSystem:
         try:
             resource = self._resource_from_path(path)
             resource_info = self.client.file.stat(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource
             )
             if resource_info is None:
                 raise web.HTTPError(404, "Resource not found: %s" % path)
             share = self.client.share.create_public_share(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 resource_info,
                 role=role,
                 password=password,
@@ -569,7 +585,7 @@ class CS3FileSystem:
         filter = self.client.share.create_public_share_filter(filter_type="TYPE_CREATOR", creator_idp=creator_idp, creator_opaque_id=creator_opaque_id)
         try:
             result = self.client.share.list_existing_public_shares(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 [filter]
             )
             return result if result is not None else []
@@ -583,7 +599,7 @@ class CS3FileSystem:
         filter = self.client.share.create_public_share_filter("TYPE_RESOURCE_ID", resource.id)
         try:
             result = self.client.share.list_existing_public_shares(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 [filter]
             )
             return result if result is not None else []
@@ -597,7 +613,7 @@ class CS3FileSystem:
         """Update a public share by its ID."""
         try:
             share = self.client.share.update_public_share(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 type=type,
                 role=role,
                 opaque_id=share_id,
@@ -617,7 +633,7 @@ class CS3FileSystem:
         """Remove a public share by its ID."""
         try:
             self.client.share.remove_public_share(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 opaque_id=share_id
             )
         except Exception as e:
@@ -638,7 +654,7 @@ class CS3FileSystem:
 
         try:
             result = self.client.user.find_users(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 filters
             )
             return result if result is not None else []
@@ -662,7 +678,7 @@ class CS3FileSystem:
 
         try:
             result = self.client.group.find_groups(
-                Auth.check_token(self.secret),
+                self.auth.get_token(),
                 filters
             )
             return result if result is not None else []
@@ -774,7 +790,7 @@ class CS3File:
         raise NotImplementedError("File descriptors not supported in CS3")
 
 # Convenience function to create a global CS3 file system instance
-def create_cs3_filesystem(config, token, root_path) -> CS3FileSystem:
+def create_cs3_filesystem(config, root_path, client_id = None, client_secret = None) -> CS3FileSystem:
     """Create a CS3FileSystem instance."""
-    cs3_fs = CS3FileSystem(config, token, root_path)
+    cs3_fs = CS3FileSystem(config, root_path, client_id=client_id, client_secret=client_secret)
     return cs3_fs
