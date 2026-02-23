@@ -365,6 +365,28 @@ class GetQuotaHandler(APIHandler):
         self.set_header("Content-Type", "application/json")
         self.write({"quota": quota_dict})
 
+class GetSpaceHandler(APIHandler):
+    """
+    Handler for retrieving space information for the user.
+    """
+    @web.authenticated
+    async def get(self):
+        cm = self.contents_manager
+        try:
+            spaces = cm.list_spaces()
+        except Exception as e:
+            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            self.set_status(http_code)
+            self.write({"error": str(e)})
+            return
+        spaces_list = [
+            MessageToDict(s, preserving_proto_field_name=True)
+            for s in spaces
+        ]
+        self.set_header("Content-Type", "application/json")
+        self.write({"spaces": spaces_list})
+
+
 default_handlers = [
         (url_path_join("share", "share"), SharesHandler),
 
@@ -380,4 +402,5 @@ default_handlers = [
         (url_path_join("find", "groups"), FindGroupsHandler),
 
         (url_path_join("quota"), GetQuotaHandler),
+        (url_path_join("space", "list"), GetSpaceHandler),
 ]
