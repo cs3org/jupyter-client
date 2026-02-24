@@ -676,6 +676,19 @@ class CS3FileSystem:
             self.status_handler.handle_errors(e)
             return []
 
+    def list_spaces(self) -> List[dict]:
+        """List existing spaces."""
+        filter = self.client.space.create_storage_space_filter(filter_type = "TYPE_SPACE_TYPE", space_type = "project")
+        try:
+            result = self.client.space.list_storage_spaces(
+                self.auth.get_token(),
+                [filter]
+            )
+            return result if result is not None else []
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+            return []
+
 class CS3File:
     """File-like object for CS3 storage with proper context manager support."""
 
