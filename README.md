@@ -63,10 +63,10 @@ pip install -e .
 
 ### Labextension Development
 
-```bash
-# Create fake EOS directories for testing
-./setup-fake-eos.sh ./fake-eos
+1. [Mount EOS locally](https://cern.service-now.com/service-portal?id=kb_article&n=KB0006614)
+2. Install the extension:
 
+```bash
 # Install the extension (pip install -e . also builds the labextension)
 pip install -e .
 
@@ -80,12 +80,12 @@ jupyter labextension list
 
 # Start JupyterLab
 jupyter lab \
-    --ServerApp.root_dir='./fake-eos' \
-    --FileContentsManager.preferred_dir='user/<u>/<user>' \
+    --ServerApp.root_dir='/eos' \  # Path to your local eos mount
+    --FileContentsManager.preferred_dir='user/<u>/<user>' \  # Path to your EOS home (relative to /eos)
     --ServerApp.token=''
 ```
 
-## Configuration
+3. Configure Jupyter server as shown below. You can omit the `c.ServerApp.contents_manager_class` and use the default contents manager.
 
 ### Jupyter Server Configuration
 
