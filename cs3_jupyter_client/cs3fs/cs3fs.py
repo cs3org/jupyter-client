@@ -639,7 +639,7 @@ class CS3FileSystem:
         except Exception as e:
             self.status_handler.handle_errors(e)
 
-    def find_users(self, query: str, usertype: str) -> List[dict]:
+    def find_users(self, query: str, user_type: str) -> List[dict]:
         """Find users matching a query.
         :param query: The query string for TYPE_QUERY filter.
         :param user_type: The user type for TYPE_USER_TYPE filter. Supported types: USER_TYPE_PRIMARY,
@@ -649,8 +649,8 @@ class CS3FileSystem:
         filters = []
         if query:
             filters.append(User.create_find_user_filter("TYPE_QUERY", query=query))
-        if usertype:
-            filters.append(User.create_find_user_filter("TYPE_USERTYPE", user_type=usertype))
+        if user_type:
+            filters.append(User.create_find_user_filter("TYPE_USERTYPE", user_type=user_type))
 
         try:
             result = self.client.user.find_users(
