@@ -672,9 +672,9 @@ class CS3FileSystem:
         """
         filters = []
         if query:
-            filters.append(self.client.group.create_group_filter("TYPE_QUERY", query))
+            filters.append(self.client.group.create_find_group_filter("TYPE_QUERY", query=query, group_type=None))
         if group_type:
-            filters.append(self.client.group.create_group_filter("TYPE_GROUP_TYPE", group_type))
+            filters.append(self.client.group.create_find_group_filter("TYPE_GROUPTYPE", query=None, group_type=group_type))
 
         try:
             result = self.client.group.find_groups(
