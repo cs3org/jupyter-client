@@ -6,7 +6,6 @@ Utilities for file-based Contents/Checkpoints managers.
 
 from __future__ import annotations
 
-from base64 import decodebytes
 import errno
 import os
 from contextlib import contextmanager
@@ -22,7 +21,7 @@ from .cs3mixin import CS3Mixin
 
 
 if TYPE_CHECKING:
-    from .cs3fs.cs3fs import CS3File
+    from .cs3vfs.cs3vfs import CS3File
 
 
 class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
@@ -94,10 +93,14 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
     # Completely replaced with CS3 functionality (used to call shutil copy)
     async def _copy(self, src, dest):
         """copy src to dest using cs3 filesystem while checking permissions"""
-        if not self.access(src, os.W_OK):
-            if self.log:
-                self.log.debug("Source file, %s, is not writable", src, exc_info=True)
-            raise PermissionError(errno.EACCES, f"File is not writable: {src}")
+        if not self.access(src, os.R_OK):
+            self.log.debug("Source file, %s, is not readable", src, exc_info=True)
+            raise PermissionError(errno.EACCES, f"File is not readable: {src}")
+
+        dest_parent = os.path.dirname(dest) or dest
+        if not self.access(dest_parent, os.W_OK):
+            self.log.debug("Destination directory, %s, is not writable", dest_parent, exc_info=True)
+            raise PermissionError(errno.EACCES, f"Destination is not writable: {dest}")
 
         await self.copyfile(src, dest)
 
@@ -123,15 +126,28 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
         with self.open(path, mode, encoding=encoding) as f:
             yield f
 
-    # Replaced atomic writing since we let reva handle this
+    def _vfs_save_file(self, os_path: str, content, format: str) -> None:
+        """Sync helper to save via CS3VirtualFileSystem._save_file."""
+        # CS3Mixin ultimately inherits CS3VirtualFileSystem where _save_file is implemented.
+        CS3Mixin._save_file(self, os_path, content, format)  # type: ignore[attr-defined]
+
     async def _save_notebook(self, os_path, nb, capture_validation_error=None):
         """Save a notebook to an os_path."""
-        with self.writing(os_path, encoding="utf-8") as f:
-            f.write(nbformat.writes(
-                nb,
-                version=nbformat.NO_CONVERT,
-                capture_validation_error=capture_validation_error
-            ))
+        nb_text = nbformat.writes(
+            nb,
+            version=nbformat.NO_CONVERT,
+            capture_validation_error=capture_validation_error,
+        )
+        await run_sync(self._vfs_save_file, os_path, nb_text, "text")
+
+    async def _save_file(self, os_path, content, format):
+        """Save content of a generic file."""
+        if format not in {"text", "base64"}:
+            raise HTTPError(
+                400,
+                "Must specify format of file contents as 'text' or 'base64'",
+            )
+        await run_sync(self._vfs_save_file, os_path, content, format)
 
     # replaced with CS3 functionality
     async def _read_file(  # type: ignore[override]
@@ -160,23 +176,3 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
             raise HTTPError(404, f"File not found: {os_path}")
 
         return self.read_file(os_path, format, raw)
-
-    # replaced atomic writing since we let reva handle this
-    async def _save_file(self, os_path, content, format):
-        """Save content of a generic file."""
-        if format not in {"text", "base64"}:
-            raise HTTPError(
-                400,
-                "Must specify format of file contents as 'text' or 'base64'",
-            )
-        try:
-            if format == "text":
-                bcontent = content.encode("utf8")
-            else:
-                b64_bytes = content.encode("ascii")
-                bcontent = decodebytes(b64_bytes)
-        except Exception as e:
-            raise HTTPError(400, f"Encoding error saving {os_path}: {e}") from e
-
-        with self.writing(os_path, text=False) as f:
-            await run_sync(f.write, bcontent)

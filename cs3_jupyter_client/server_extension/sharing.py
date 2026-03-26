@@ -3,7 +3,7 @@ from tornado import web
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 from google.protobuf.json_format import MessageToDict
-from ..cs3fs.statuscodehandler import ErrorToHttpCode
+from ..cs3vfs.statuscodehandler import ErrorToHttpCode
 
 
 

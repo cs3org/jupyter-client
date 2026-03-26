@@ -1,7 +1,7 @@
 """
-statuscodehandler.py
+CS3 status code handler and error mapping.
 
-Authors: Rasmus Welander.
+Authors: Rasmus Oscar Welander.
 Emails: rasmus.oscar.welander@cern.ch.
 """
 

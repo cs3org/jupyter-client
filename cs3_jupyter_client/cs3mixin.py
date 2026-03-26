@@ -1,179 +1,95 @@
 from __future__ import annotations
 
-
-import os
-import inspect
 import jwt
+import os
+from configparser import ConfigParser
+from typing import Any
+
+from cs3client.auth import Auth
+from cs3client.cs3client import CS3Client
 from traitlets import Bool, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
-from .cs3fs.cs3fs import create_cs3_filesystem
-from configparser import ConfigParser
-from functools import wraps
 
-class CS3Mixin(LoggingConfigurable):
-    """
-    Base mixin providing CS3 filesystem access for all file operation classes.
-    """
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
-        self._read_token_file()
-        self._cs3_fs = None
-        # Initialize CS3 filesystem
-        self._user_path = f'{self.root_path}'
-        self._config = self._create_cs3_config()
-        self.log.debug(f"CS3Mixin initialized with path: {self._user_path}")
+from .cs3vfs.statuscodehandler import StatusCodeHandler
+from .cs3vfs.cs3groups import CS3Groups
+from .cs3vfs.cs3sharing import CS3Sharing
+from .cs3vfs.cs3spaces import CS3Spaces
+from .cs3vfs.cs3users import CS3Users
+from .cs3vfs.cs3vfs import CS3VirtualFileSystem
 
-    host = Unicode(
-        config=True,
-        help="CS3 host address"
-    )
+class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing, LoggingConfigurable):
+    """Owns the shared CS3Client/Auth and persistent service instances."""
 
-    tus_enabled = Bool(
-        default_value=False,
-        config=True,
-        help="Enable TUS protocol"
-    )
-
-    ssl_enabled = Bool(
-        default_value=False,
-        config=True,
-        help="Enable SSL connection"
-    )
-
+    host = Unicode(config=True, help="CS3 host address")
+    tus_enabled = Bool(default_value=False, config=True, help="Enable TUS protocol")
+    ssl_enabled = Bool(default_value=False, config=True, help="Enable SSL connection")
     token_path = Unicode(
         default_value="/tmp/cernbox_oauth.token",
         config=True,
-        help="Path to OAuth token file"
+        help="Path to OAuth token file",
     )
-
-    root_path = Unicode(
-        default_value="",
-        config=True,
-        help="CS3 root path for the user"
-    )
-
+    root_path = Unicode(default_value="", config=True, help="CS3 root path for the user")
     auth_login_type = Unicode(
-        default_value="bearer",
-        config=True,
-        help="Authentication login type"
+        default_value="bearer", config=True, help="Authentication login type"
     )
-
     authtokenvalidity = Int(
-        default_value=3600,
-        config=True,
-        help="Authentication token validity in seconds"
+        default_value=3600, config=True, help="Authentication token validity in seconds"
     )
+    lock_not_impl = Bool(default_value=False, config=True, help="Lock not implemented flag")
+    lock_as_attr = Bool(default_value=False, config=True, help="Lock as attribute flag")
+    cs3_token = Unicode(default_value="", config=True, help="CS3 authentication token")
+    client_id = Unicode(default_value="", config=True, help="CS3 client ID (can be set in config)")
 
-    lock_not_impl = Bool(
-        default_value=False,
-        config=True,
-        help="Lock not implemented flag"
-    )
 
-    lock_as_attr = Bool(
-        default_value=False,
-        config=True,
-        help="Lock as attribute flag"
-    )
+    def __init__(self, **kwargs: Any):
+        self.status_handler = StatusCodeHandler()
+        super().__init__(**kwargs)
+        self._read_token_file()
+        self._config = self._create_cs3_config()
+        self.client = CS3Client(self._config, "cs3client", self.log)
+        self.auth = Auth(self.client)
+        self.auth.set_client_id(self.client_id)
+        self.auth.set_client_secret(self.cs3_token)
 
-    cs3_token = Unicode(
-        default_value="",
-        config=True,
-        help="CS3 authentication token"
-    )
+        self.log.debug(f"CS3ClientMixinBase initialized with path: {self.root_path}")
 
-    client_id = Unicode(
-        default_value="",
-        config=True,
-        help="CS3 client ID (can be set in config)"
-    )
+    def get_user_path(self) -> str:
+        return self.root_path
 
-    def get_user_path(self):
-        """Get the user path for CS3 operations."""
-        return self._user_path
-
-    def _read_token_file(self):
-        """Read token from file and set cs3_token."""
+    def _read_token_file(self) -> None:
         try:
             if os.path.exists(self.token_path):
-                with open(self.token_path, 'r') as f:
+                with open(self.token_path, "r") as f:
                     self.cs3_token = f.read().strip()
             else:
                 self.log.warning(f"Token file not found: {self.token_path}")
         except Exception as e:
             self.log.error(f"Failed to read token file {self.token_path}: {e}")
 
-    def _create_cs3_config(self):
-        """Create CS3 config object from trait values."""
+    def _refresh_auth(self) -> None:
+        """Reload token/secret from disk and update the shared Auth object."""
+        self._read_token_file()
+        self.auth.set_client_secret(self.cs3_token)
 
+    def _create_cs3_config(self) -> ConfigParser:
         cs3config = ConfigParser()
-        cs3config.add_section('cs3client')
-        cs3config.set('cs3client', 'host', self.host)
-        cs3config.set('cs3client', 'tus_enabled', str(self.tus_enabled).lower())
-        cs3config.set('cs3client', 'ssl_enabled', str(self.ssl_enabled).lower())
-        cs3config.set('cs3client', 'token_path', self.token_path)
-        cs3config.set('cs3client', 'auth_login_type', self.auth_login_type)
-        cs3config.set('cs3client', 'authtokenvalidity', str(self.authtokenvalidity))
-        cs3config.set('cs3client', 'lock_not_impl', str(self.lock_not_impl).lower())
-        cs3config.set('cs3client', 'lock_as_attr', str(self.lock_as_attr).lower())
-
+        cs3config.add_section("cs3client")
+        cs3config.set("cs3client", "host", self.host)
+        cs3config.set("cs3client", "tus_enabled", str(self.tus_enabled).lower())
+        cs3config.set("cs3client", "ssl_enabled", str(self.ssl_enabled).lower())
+        cs3config.set("cs3client", "token_path", self.token_path)
+        cs3config.set("cs3client", "auth_login_type", self.auth_login_type)
+        cs3config.set("cs3client", "authtokenvalidity", str(self.authtokenvalidity))
+        cs3config.set("cs3client", "lock_not_impl", str(self.lock_not_impl).lower())
+        cs3config.set("cs3client", "lock_as_attr", str(self.lock_as_attr).lower())
         return cs3config
 
-    def _get_cs3_fs_indep(self):
-        """
-        Get CS3 filesystem instance independent of the mixin,
-        creates a new client each time, this was tested to be more
-        performant than reusing the same client.
-        """
-        return create_cs3_filesystem(
-            self._config,
-            self.root_path,
-            client_secret=self.cs3_token,
-            client_id=self.client_id,
-        )
-
-    @property
-    def cs3_fs(self):
-        """CS3 filesystem instance, we create a new client on each access because this is more
-        performant than trying to reuse the same client."""
-        return self._get_cs3_fs_indep()
-
-    def __getattr__(self, name: str):
-
-        # Don't proxy private attributes (starting with _) to avoid recursion
-        if name.startswith('_'):
-            raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
-
-        # Delegate to cs3_fs
-        target = getattr(self.cs3_fs, name)
-
-        if not callable(target):
-            return target
-
-        # Wrap sync vs async
-        if inspect.iscoroutinefunction(target):
-            @wraps(target)
-            async def async_wrapped(*args, **kwargs):
-                try:
-                    return await target(*args, **kwargs)
-                except PermissionError as e:
-                    self.log.error(f"cs3mixin: {name.upper()} AUTH ERROR - {e}, reading token and retrying...")
-                    self._read_token_file()
-                    return await getattr(self.cs3_fs, name)(*args, **kwargs)
-            return async_wrapped
-
-        @wraps(target)
-        def wrapped(*args, **kwargs):
-            try:
-                return target(*args, **kwargs)
-            except PermissionError as e:
-                self.log.error(f"cs3mixin: {name.upper()} AUTH ERROR - {e}, reading token and retrying...")
-                self._read_token_file()
-                return getattr(self.cs3_fs, name)(*args, **kwargs)
-        return wrapped
-
     def _decode_token(self) -> dict:
-        return jwt.decode(jwt=self.cs3_token, algorithms=["HS256"], options={"verify_signature": False})
+        return jwt.decode(
+            jwt=self.cs3_token,
+            algorithms=["HS256"],
+            options={"verify_signature": False},
+        )
 
     @property
     def user_idp(self) -> str:
