@@ -243,13 +243,10 @@ class SharedByMeHandler(APIHandler):
     """
     @web.authenticated
     async def get(self):
-        headers = self.request.headers
-        creator_idp = headers.get("creator_idp", "")
-        creator_opaque_id = headers.get("creator_opaque_id", "")
         cm = self.contents_manager
         try:
-            shares, _ = cm.list_existing_shares_by_creator(creator_idp, creator_opaque_id)
-            public_shares, _ = cm.list_existing_public_shares_by_creator(creator_idp, creator_opaque_id)
+            shares, _ = cm.list_existing_shares_by_creator(cm.user_idp, cm.user_opaque_id)
+            public_shares, _ = cm.list_existing_public_shares_by_creator(cm.user_idp, cm.user_opaque_id)
         except Exception as e:
             http_code = ErrorToHttpCode().map_exception_to_http_code(e)
             self.set_status(http_code)

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import inspect
+import jwt
 from traitlets import Bool, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
 from .cs3fs.cs3fs import create_cs3_filesystem
@@ -170,3 +171,14 @@ class CS3Mixin(LoggingConfigurable):
                 self._read_token_file()
                 return getattr(self.cs3_fs, name)(*args, **kwargs)
         return wrapped
+
+    def _decode_token(self) -> dict:
+        return jwt.decode(jwt=self.cs3_token, algorithms=["HS256"], options={"verify_signature": False})
+
+    @property
+    def user_idp(self) -> str:
+        return self._decode_token()["user"]["id"]["idp"]
+
+    @property
+    def user_opaque_id(self) -> str:
+        return self._decode_token()["user"]["id"]["opaque_id"]
