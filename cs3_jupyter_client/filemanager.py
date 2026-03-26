@@ -4,20 +4,20 @@
 # Distributed under the terms of the Modified BSD License.
 from __future__ import annotations
 
-import os
 import errno
+import os
 import stat
+from pathlib import Path
 
-from jupyter_server import _tz as tz
 from anyio.to_thread import run_sync
+from jupyter_server import _tz as tz
 from tornado import web
-from traitlets import default, validate
 from tornado.web import HTTPError
+from traitlets import default, validate
 
 from .filecheckpoints import CS3FileCheckpoints
 from .fileio import CS3FileManagerMixin
 from jupyter_server.services.contents.manager import copy_pat
-from pathlib import Path
 
 '''
 These are functions that have been reimplemented from jupyter.core.paths and os.path
@@ -58,11 +58,15 @@ class CS3FileContentsManager(CS3FileManagerMixin):
     def _default_root_dir(self):
         return self.get_user_path()
 
-    # Upstream uses os.path.isabs and os.path.isdir
-    # Different implementation
+    # We cannot validate before starting if it's a virtual filesystem.
     @validate("root_dir")
     def _validate_root_dir(self, proposal):
-        return self.get_user_path()
+        return proposal.value
+
+    # We cannot validate before starting if it's a virtual filesystem.
+    @validate("preferred_dir")
+    def _validate_preferred_dir(self, proposal):
+        return proposal.value
 
     # Different import than upstream
     @default("checkpoints_class")
@@ -228,10 +232,9 @@ class CS3FileContentsManager(CS3FileManagerMixin):
                 from_dir = ""
                 from_name = path
 
-            model = await self.get(path)
-            model.pop("path", None)
-            model.pop("name", None)
-            if model["type"] == "directory":
+            # Ensure source exists and is a file
+            src_model = await self.get(path, content=False)
+            if src_model["type"] == "directory":
                 raise HTTPError(400, "Can't copy directories")
 
             is_destination_specified = to_path is not None
@@ -249,7 +252,13 @@ class CS3FileContentsManager(CS3FileManagerMixin):
             else:
                 raise HTTPError(404, "No such directory: %s" % to_path)
 
-            model = await self.save(model, to_path)
+            src_os_path = self._get_os_path(path)
+            dest_os_path = self._get_os_path(to_path)
+
+            with self.perm_to_403(dest_os_path):
+                await self._copy(src_os_path, dest_os_path)
+
+            model = await self.get(to_path, content=False)
             self.emit(data={"action": "copy", "path": to_path, "source_path": from_path})
             return model
 
