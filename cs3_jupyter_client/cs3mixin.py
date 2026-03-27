@@ -85,8 +85,9 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
         return cs3config
 
     def _decode_token(self) -> dict:
+        _, token = self.auth.get_token()
         return jwt.decode(
-            jwt=self.cs3_token,
+            jwt=token,
             algorithms=["HS256"],
             options={"verify_signature": False},
         )

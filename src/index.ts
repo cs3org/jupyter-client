@@ -1,8 +1,10 @@
 import { ILabShell, JupyterFrontEnd, JupyterFrontEndPlugin } from '@jupyterlab/application';
+import { IDocumentManager } from '@jupyterlab/docmanager';
 import { IDefaultFileBrowser } from '@jupyterlab/filebrowser';
-import { spacesIcon, shareIcon } from './icons';
+import { spacesIcon, shareIcon, cernboxIcon } from './icons';
 import { SpacesWidget } from './spaces-widget';
 import { SharesWidget } from './shares-widget';
+import { openEditShareModal } from './share-edit-modal';
 import { attachQuotaIndicator } from './quota-widget';
 
 /**
@@ -16,12 +18,17 @@ const sharesPlugin: JupyterFrontEndPlugin<void> = {
   id: '@cs3org/cs3-jupyter-client:shares',
   description: 'Browse CERNBox shared folders from the JupyterLab sidebar',
   autoStart: true,
-  requires: [IDefaultFileBrowser],
+  requires: [IDefaultFileBrowser, IDocumentManager],
   optional: [ILabShell],
-  activate: (app: JupyterFrontEnd, fileBrowser: IDefaultFileBrowser, labShell: ILabShell | null) => {
+  activate: (
+    app: JupyterFrontEnd,
+    fileBrowser: IDefaultFileBrowser,
+    docManager: IDocumentManager,
+    labShell: ILabShell | null
+  ) => {
     console.log('[cs3org/cs3-jupyter-client] Activating shares plugin');
 
-    const widget = new SharesWidget(fileBrowser, app.shell);
+    const widget = new SharesWidget(fileBrowser, app.shell, app.commands, docManager.registry);
     widget.title.icon = shareIcon;
 
     if (labShell) {
@@ -29,6 +36,26 @@ const sharesPlugin: JupyterFrontEndPlugin<void> = {
     } else {
       app.shell.add(widget, 'left');
     }
+
+    const SHARE_COMMAND = '@cs3org/cs3-jupyter-client:share-file';
+
+    app.commands.addCommand(SHARE_COMMAND, {
+      label: 'Share',
+      icon: cernboxIcon,
+      execute: () => {
+        const item = fileBrowser.selectedItems().next();
+        if (item.done || !item.value) return;
+        const selected = item.value;
+        const rawPath = '/eos/' + selected.path; // TODO: Don't hardcode this prefix
+        openEditShareModal({ name: selected.name, rawPath }, () => widget.refresh());
+      }
+    });
+
+    app.contextMenu.addItem({
+      command: SHARE_COMMAND,
+      selector: '.jp-DirListing-item',
+      rank: 5
+    });
   }
 };
 
