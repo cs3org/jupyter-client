@@ -1,11 +1,9 @@
 import { ServerConnection } from '@jupyterlab/services';
 
-// TODO: Are there other grantee types?
-type GranteeType = 'GRANTEE_TYPE_USER' | 'GRANTEE_TYPE_GROUP';
+type GranteeType = 'GRANTEE_TYPE_USER' | 'GRANTEE_TYPE_GROUP' | 'GRANTEE_TYPE_INVALID';
 type ShareDirection = 'BY_ME' | 'WITH_ME';
 type ShareType = 'REGULAR' | 'PUBLIC';
-// TODO: What other share states are there?
-type ShareState = 'SHARE_STATE_ACCEPTED';
+type ShareState = 'SHARE_STATE_ACCEPTED' | 'SHARE_STATE_PENDING' | 'SHARE_STATE_REJECTED';
 
 interface RawUserGrantee {
   type: 'GRANTEE_TYPE_USER';
