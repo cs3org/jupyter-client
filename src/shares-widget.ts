@@ -1,7 +1,7 @@
 import { Widget } from '@lumino/widgets';
 import { FileBrowser } from '@jupyterlab/filebrowser';
 import { JupyterFrontEnd } from '@jupyterlab/application';
-import { IShare, fetchShares } from './shares';
+import { Share, fetchShares } from './shares';
 
 const CSS = {
   panel: 'swan-shares-panel',
@@ -29,7 +29,7 @@ export class SharesWidget extends Widget {
   private _fileBrowser: FileBrowser;
   private _shell: JupyterFrontEnd.IShell;
   private _listNode: HTMLElement;
-  private _shares: IShare[] = [];
+  private _shares: Share[] = [];
 
   constructor(fileBrowser: FileBrowser, shell: JupyterFrontEnd.IShell) {
     super();
@@ -93,8 +93,8 @@ export class SharesWidget extends Widget {
       return;
     }
 
-    const incoming = this._shares.filter(s => s.direction === 'incoming');
-    const outgoing = this._shares.filter(s => s.direction === 'outgoing');
+    const incoming = this._shares.filter(s => s.shareDirection === 'WITH_ME');
+    const outgoing = this._shares.filter(s => s.shareDirection === 'BY_ME');
 
     if (incoming.length > 0) {
       this._renderSection('Shared with me', incoming);
@@ -104,7 +104,7 @@ export class SharesWidget extends Widget {
     }
   }
 
-  private _renderSection(title: string, shares: IShare[]) {
+  private _renderSection(title: string, shares: Share[]) {
     const section = document.createElement('div');
     section.className = CSS.section;
 
@@ -120,7 +120,7 @@ export class SharesWidget extends Widget {
     this._listNode.appendChild(section);
   }
 
-  private _createShareItem(share: IShare): HTMLElement {
+  private _createShareItem(share: Share): HTMLElement {
     const item = document.createElement('div');
     item.className = CSS.item;
     item.dataset.path = share.path;
@@ -133,10 +133,10 @@ export class SharesWidget extends Widget {
 
     const meta = document.createElement('div');
     meta.className = CSS.itemMeta;
-    if (share.direction === 'incoming' && share.sharedBy) {
+    if (share.shareDirection === 'WITH_ME' && share.sharedBy) {
       meta.textContent = `from ${share.sharedBy}`;
-    } else if (share.direction === 'outgoing' && share.sharedWith) {
-      meta.textContent = `with ${share.sharedWith.join(', ')}`;
+    } else if (share.shareDirection === 'BY_ME' && share.shareType === 'REGULAR' && share.sharedWith.length > 0) {
+      meta.textContent = `with ${share.sharedWith.map(g => g.opaqueId).join(', ')}`;
     }
     item.appendChild(meta);
 
@@ -155,7 +155,7 @@ export class SharesWidget extends Widget {
   /**
    * Navigate the file browser to the given share.
    */
-  private async _navigateToShare(share: IShare): Promise<void> {
+  private async _navigateToShare(share: Share): Promise<void> {
     try {
       await this._fileBrowser.model.cd(share.path);
       this._shell.activateById(this._fileBrowser.id);
