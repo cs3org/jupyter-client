@@ -32,7 +32,7 @@ class SharesHandler(APIHandler):
         cm = self.contents_manager
         self.log.info(f"Creating share for path: {path} to {grantee_type} {opaque_id} with role {role}")
         try:
-            share = cm.create_share(opaque_id, idp, role, path, grantee_type)
+            share = cm.create_share(path, opaque_id, idp, role, grantee_type)
         except Exception as e:
             http_code = ErrorToHttpCode().map_exception_to_http_code(e)
             self.set_status(http_code)
