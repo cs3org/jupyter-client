@@ -55,7 +55,6 @@ class CS3Sharing:
             return result if result is not None else []
         except Exception as e:
             self.status_handler.handle_errors(e)
-            return []
 
     @retry_on_auth_failure
     # This is when we want to list "shared by me" shares
@@ -70,7 +69,6 @@ class CS3Sharing:
             return result if result is not None else []
         except Exception as e:
             self.status_handler.handle_errors(e)
-            return []
 
     @retry_on_auth_failure
     def remove_share(self, share_id: str) -> None:
@@ -107,7 +105,6 @@ class CS3Sharing:
             return result if result is not None else []
         except Exception as e:
             self.status_handler.handle_errors(e)
-            return []
 
     @retry_on_auth_failure
     def update_received_share(self, share_id: str, hidden: bool) -> None:
@@ -152,7 +149,6 @@ class CS3Sharing:
             return share
         except Exception as e:
             self.status_handler.handle_errors(e)
-            return {}
 
     @retry_on_auth_failure
     def list_existing_public_shares_by_creator(self, creator_idp: str, creator_opaque_id: str) -> List[dict]:
@@ -166,7 +162,6 @@ class CS3Sharing:
             return result if result is not None else []
         except Exception as e:
             self.status_handler.handle_errors(e)
-            return []
 
     @retry_on_auth_failure
     def list_existing_public_shares_by_resource(self, path: str) -> List[dict]:
@@ -182,7 +177,6 @@ class CS3Sharing:
             return result if result is not None else []
         except Exception as e:
             self.status_handler.handle_errors(e)
-            return []
 
     @retry_on_auth_failure
     def update_public_share(self, share_id: str, type: str,role: str = None, password: str = None,

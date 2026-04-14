@@ -16,7 +16,7 @@ from tornado.web import HTTPError
 from traitlets import default, validate
 
 from .filecheckpoints import CS3FileCheckpoints
-from .fileio import CS3FileManagerMixin
+from .fileio import CS3FileManagerMixin, CS3HybridFileManagerMixin
 from jupyter_server.services.contents.manager import copy_pat
 
 '''
@@ -282,3 +282,11 @@ class CS3FileContentsManager(CS3FileManagerMixin):
     # and upstream is significantly more complex so no point in pushing this upstream
     async def _get_dir_size(self, path: str = ".") -> str:
         return self.get_dir_size(str(path))  # type:ignore[return-value]
+
+class CS3HybridFileManager(CS3HybridFileManagerMixin):
+    """An async file contents manager."""
+
+    # We still want to use CS3FileCheckpoints since EOS handles this functionality for us.
+    @default("checkpoints_class")
+    def _checkpoints_class_default(self):
+        return CS3FileCheckpoints

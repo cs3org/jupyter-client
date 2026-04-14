@@ -38,4 +38,3 @@ class CS3Users:
             return result if result is not None else []
         except Exception as e:
             self.status_handler.handle_errors(e)
-            return []

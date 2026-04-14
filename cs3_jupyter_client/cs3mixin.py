@@ -11,13 +11,14 @@ from traitlets import Bool, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
 
 from .cs3vfs.statuscodehandler import StatusCodeHandler
+from .cs3vfs.cs3versions import CS3FileVersions
 from .cs3vfs.cs3groups import CS3Groups
 from .cs3vfs.cs3sharing import CS3Sharing
 from .cs3vfs.cs3spaces import CS3Spaces
 from .cs3vfs.cs3users import CS3Users
 from .cs3vfs.cs3vfs import CS3VirtualFileSystem
 
-class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing, LoggingConfigurable):
+class CS3BaseMixin(CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, LoggingConfigurable):
     """Owns the shared CS3Client/Auth and persistent service instances."""
 
     host = Unicode(config=True, help="CS3 host address")
@@ -98,3 +99,8 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
     @property
     def user_opaque_id(self) -> str:
         return self._decode_token()["user"]["id"]["opaque_id"]
+
+
+class CS3Mixin(CS3BaseMixin, CS3VirtualFileSystem):
+    """CS3Mixin combines the base mixin with the virtual file system operations."""
+    pass
