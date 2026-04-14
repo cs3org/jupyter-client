@@ -37,3 +37,18 @@ class CS3Groups:
             return result if result is not None else []
         except Exception as e:
             self.status_handler.handle_errors(e)
+
+    @retry_on_auth_failure
+    def get_group(self, opaque_id: str, idp: str) -> dict:
+        """
+        Get information about a specific group by its ID and idp.
+        """
+        try:
+            result = self.client.group.get_group(
+                self.auth.get_token(),
+                opaque_id,
+                idp
+            )
+            return result if result is not None else {}
+        except Exception as e:
+            self.status_handler.handle_errors(e)
