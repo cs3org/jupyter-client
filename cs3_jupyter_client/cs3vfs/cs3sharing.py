@@ -44,11 +44,13 @@ class CS3Sharing:
     def list_existing_shares_by_resource(self, path) -> List[dict]:
         """List existing shares for a given resource."""
         resource = resource_from_path(path)
-        filter = self.client.share.create_share_filter(filter_type = "TYPE_RESOURCE_ID", resource_id = resource.id)
+        # We need to use the resource ID filter to get shares for a specific resource the path is not enough.
         try:
+            resource_info = self.client.file.stat(self.auth.get_token(), resource)
+            filter = self.client.share.create_share_filter(filter_type="TYPE_RESOURCE_ID", resource_id=resource_info.id)
             result = self.client.share.list_existing_shares(
                 self.auth.get_token(),
-                [filter]
+                filter_list=[filter]
             )
             return result if result is not None else []
         except Exception as e:
@@ -170,11 +172,12 @@ class CS3Sharing:
     def list_existing_public_shares_by_resource(self, path: str) -> List[dict]:
         """List existing public shares for a given resource."""
         resource = resource_from_path(path)
-        filter = self.client.share.create_public_share_filter("TYPE_RESOURCE_ID", resource.id)
         try:
+            resource_info = self.client.file.stat(self.auth.get_token(), resource)
+            filter = self.client.share.create_public_share_filter(filter_type="TYPE_RESOURCE_ID", resource_id=resource_info.id)
             result = self.client.share.list_existing_public_shares(
                 self.auth.get_token(),
-                [filter]
+                filter_list=[filter]
             )
             return result if result is not None else []
         except Exception as e:
