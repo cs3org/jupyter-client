@@ -101,7 +101,6 @@ class CS3BaseMixin(CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, 
     def user_opaque_id(self) -> str:
         return self._decode_token()["user"]["id"]["opaque_id"]
 
-
 class CS3Mixin(CS3BaseMixin, CS3VirtualFileSystem):
     """CS3Mixin combines the base mixin with the virtual file system operations."""
     pass
