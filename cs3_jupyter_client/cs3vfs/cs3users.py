@@ -38,3 +38,15 @@ class CS3Users:
             return result if result is not None else []
         except Exception as e:
             self.status_handler.handle_errors(e)
+
+    @retry_on_auth_failure
+    def get_user(self, idp: str, user_id: str) -> 'User':
+        """Get user information by user ID and IDP."""
+        try:
+            result = self.client.user.get_user(
+                idp,
+                user_id,
+            )
+            return result if result is not None else {}
+        except Exception as e:
+            self.status_handler.handle_errors(e)
