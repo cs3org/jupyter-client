@@ -5,6 +5,7 @@ from jupyter_server.utils import url_path_join
 from google.protobuf.json_format import MessageToDict
 from ..cs3vfs.statuscodehandler import ErrorToHttpCode
 
+from .utils import cache_get_user_info
 
 
 class SharesHandler(APIHandler):
@@ -232,6 +233,13 @@ class SharedWithMeHandler(APIHandler):
             MessageToDict(s, preserving_proto_field_name=True)
             for s in shares
         ]
+        for s in shares_list:
+            uid = s["received_share"]["share"]["creator"]["opaque_id"]
+            if not uid:
+                continue
+            info = cache_get_user_info(cm, user_id=uid, log=self.log)
+            if info is not None:
+                s["creator_user_info"] = info
 
         self.set_header("Content-Type", "application/json")
         self.write({"shares": shares_list})
@@ -256,6 +264,13 @@ class SharedByMeHandler(APIHandler):
             MessageToDict(s, preserving_proto_field_name=True)
             for s in shares
         ]
+        for s in shares_list:
+            if s["share"]["grantee"]["type"] == "GRANTEE_TYPE_USER":
+                uid = s["share"]["grantee"]["user_id"]["opaque_id"]
+                info = cache_get_user_info(cm, user_id=uid, log=self.log)
+                if info is not None:
+                    s["grantee_user_info"] = info
+
         public_shares_list = [
             MessageToDict(s, preserving_proto_field_name=True)
             for s in public_shares
@@ -285,6 +300,14 @@ class SharedByResourceHandler(APIHandler):
             MessageToDict(s, preserving_proto_field_name=True)
             for s in shares
         ]
+
+        for s in shares_list:
+            if s["share"]["grantee"]["type"] == "GRANTEE_TYPE_USER":
+                uid = s["share"]["grantee"]["user_id"]["opaque_id"]
+                info = cache_get_user_info(cm, user_id=uid, log=self.log)
+                if info is not None:
+                    s["grantee_user_info"] = info
+
         public_shares_list = [
             MessageToDict(s, preserving_proto_field_name=True)
             for s in public_shares
