@@ -17,11 +17,22 @@ from traitlets.config.configurable import LoggingConfigurable
 from anyio.to_thread import run_sync
 
 from jupyter_server.utils import ApiPath, to_api_path, to_os_path
-from .cs3mixin import CS3Mixin
+from .cs3mixin import CS3BaseMixin, CS3Mixin
 
 
 if TYPE_CHECKING:
     from .cs3vfs.cs3vfs import CS3File
+
+class CS3HybridFileManagerMixin(CS3BaseMixin, LoggingConfigurable):
+    """
+    Mixin for ContentsAPI classes that interact with the filesystem asynchronously.
+    """
+    # TODO: Add locking via the CS3APIs here
+    @contextmanager
+    def open(self, os_path, *args, **kwargs):
+        """wrapper around io.open that turns permission errors into 403"""
+        with self.perm_to_403(os_path), open(os_path, *args, **kwargs) as f:
+            yield f
 
 
 class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):

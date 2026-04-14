@@ -354,34 +354,6 @@ class CS3VirtualFileSystem:
                 self.ensure_dir_exists(parent)
             self.mkdir(path)
 
-    @retry_on_auth_failure
-    def list_file_versions(self, path: str) -> Generator["FileVersion", any, any]:  # noqa: F821
-        """List file versions"""
-        try:
-            resource = resource_from_path(path)
-            result = self.client.checkpoint.list_file_versions(
-                self.auth.get_token(),
-                resource
-            )
-            return result if result is not None else []
-        except Exception as e:
-            self.status_handler.handle_errors(e)
-            return []
-
-    @retry_on_auth_failure
-    def restore_file_version(self, path: str, key: str) -> None:
-        """Restore a file version."""
-        try:
-            resource = resource_from_path(path)
-            self.client.checkpoint.restore_file_version(
-                self.auth.get_token(),
-                resource,
-                key
-            )
-        except Exception as e:
-            self.status_handler.handle_errors(e)
-
-
 
 # Convenience function to create a global CS3 file system instance
 def create_cs3_filesystem(config, root_path, client_id = None, client_secret = None) -> CS3VirtualFileSystem:
