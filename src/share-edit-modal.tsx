@@ -15,66 +15,16 @@ import {
   findGroups
 } from './shares';
 import { createDebouncedFetcher } from './debounce';
+import { ViewIcon, EditIcon, TrashIcon, UserEmoji, GroupEmoji } from './icons';
 
 export interface ShareTarget {
   name: string;
   rawPath: string;
 }
 
-const VIEW_ICON = (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-    <circle cx="12" cy="12" r="3" />
-  </svg>
-);
-const EDIT_ICON = (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z" />
-  </svg>
-);
-const TRASH_ICON = (
-  <svg
-    xmlns="http://www.w3.org/2000/svg"
-    width="14"
-    height="14"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    strokeWidth="2"
-    strokeLinecap="round"
-    strokeLinejoin="round"
-  >
-    <polyline points="3 6 5 6 21 6" />
-    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
-    <path d="M10 11v6" />
-    <path d="M14 11v6" />
-    <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-  </svg>
-);
-
 const ROLE_OPTIONS: { value: ShareRole; label: string; icon: React.ReactElement }[] = [
-  { value: 'VIEWER', label: 'Can view', icon: VIEW_ICON },
-  { value: 'EDITOR', label: 'Can edit', icon: EDIT_ICON }
+  { value: 'VIEWER', label: 'Can view', icon: ViewIcon },
+  { value: 'EDITOR', label: 'Can edit', icon: EditIcon }
 ];
 
 function RoleDropdown({
@@ -176,13 +126,13 @@ function GranteeItem({
     <div className="swan-shares-grantee-item">
       <div className="swan-shares-grantee-info">
         <span className="swan-shares-grantee-icon" title={grantee.type === 'GRANTEE_TYPE_USER' ? 'User' : 'Group'}>
-          {grantee.type === 'GRANTEE_TYPE_USER' ? '\ud83d\udc64' : '\ud83d\udc65'}
+          {grantee.type === 'GRANTEE_TYPE_USER' ? UserEmoji : GroupEmoji}
         </span>
         <span className="swan-shares-grantee-name">{grantee.opaqueId}</span>
       </div>
       <RoleDropdown value={role} onChange={handleRole} disabled={busy} />
       <button className="swan-shares-grantee-remove" title="Remove" onClick={() => onRemove(grantee.shareId)}>
-        {TRASH_ICON}
+        {TrashIcon}
       </button>
     </div>
   );
@@ -397,7 +347,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
                     {searchResults.users.map(user => (
                       <SearchResultItem
                         key={`user-${user.opaqueId}`}
-                        icon={'\ud83d\udc64'}
+                        icon={UserEmoji}
                         iconTitle="User"
                         name={user.displayName || user.opaqueId}
                         detail={user.mail || undefined}
@@ -410,7 +360,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
                     {searchResults.groups.map(group => (
                       <SearchResultItem
                         key={`group-${group.opaqueId}`}
-                        icon={'\ud83d\udc65'}
+                        icon={GroupEmoji}
                         iconTitle="Group"
                         name={group.displayName}
                         alreadyAdded={grantees.some(
