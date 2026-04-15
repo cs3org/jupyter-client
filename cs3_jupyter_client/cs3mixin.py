@@ -86,8 +86,9 @@ class CS3BaseMixin(CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, 
         return cs3config
 
     def _decode_token(self) -> dict:
+        _, token = self.auth.get_token()
         return jwt.decode(
-            jwt=self.cs3_token,
+            jwt=token,
             algorithms=["HS256"],
             options={"verify_signature": False},
         )
