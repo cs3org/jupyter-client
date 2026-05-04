@@ -61,6 +61,7 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
 
     def __init__(self, **kwargs: Any):
         self.status_handler = StatusCodeHandler()
+        self.lock_app_name = self.lock_app_name + self.client_id
         super().__init__(**kwargs)
         self._read_token_file()
         self._config = self._create_cs3_config()
