@@ -10,15 +10,18 @@ from cs3client.cs3client import CS3Client
 from traitlets import Bool, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
 
+
 from .cs3vfs.statuscodehandler import StatusCodeHandler
 from .cs3vfs.cs3versions import CS3FileVersions
-from .cs3vfs.cs3groups import CS3Groups
+from .cs3vfs.cs3vfs import CS3VirtualFileSystem
 from .cs3vfs.cs3sharing import CS3Sharing
 from .cs3vfs.cs3spaces import CS3Spaces
+from .cs3vfs.cs3groups import CS3Groups
 from .cs3vfs.cs3users import CS3Users
-from .cs3vfs.cs3vfs import CS3VirtualFileSystem
+from .cs3vfs.cs3lock import CS3Lock
+from .sessiontracker import SessionTracker
 
-class CS3BaseMixin(CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, LoggingConfigurable):
+class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, CS3Lock, LoggingConfigurable):
     """Owns the shared CS3Client/Auth and persistent service instances."""
 
     host = Unicode(config=True, help="CS3 host address")
@@ -28,6 +31,21 @@ class CS3BaseMixin(CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, 
         default_value="/tmp/cernbox_oauth.token",
         config=True,
         help="Path to OAuth token file",
+    )
+    lock_expiration = Int(
+        default_value=300,
+        config=True,
+        help="Lock expiration time in seconds"
+    )
+    lock_app_name = Unicode(
+        default_value="jupyter-rtc",
+        config=True,
+        help="String to use for application-level locking"
+    )
+    lock_value = Unicode(
+        default_value="jupyter_rtc_lock",
+        config=True,
+        help="Value to use for application-level locking"
     )
     root_path = Unicode(default_value="", config=True, help="CS3 root path for the user")
     auth_login_type = Unicode(
@@ -51,7 +69,7 @@ class CS3BaseMixin(CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, 
         self.auth = Auth(self.client)
         self.auth.set_client_id(self.client_id)
         self.auth.set_client_secret(self.cs3_token)
-
+        self.session_tracker = SessionTracker(heartbeat_timeout_seconds=self.lock_expiration)
         self.log.debug(f"CS3ClientMixinBase initialized with path: {self.root_path}")
 
     def get_user_path(self) -> str:
@@ -84,6 +102,7 @@ class CS3BaseMixin(CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, 
         cs3config.set("cs3client", "authtokenvalidity", str(self.authtokenvalidity))
         cs3config.set("cs3client", "lock_not_impl", str(self.lock_not_impl).lower())
         cs3config.set("cs3client", "lock_as_attr", str(self.lock_as_attr).lower())
+        cs3config.set("cs3client", "lock_expiration", str(self.lock_expiration))
         return cs3config
 
     def _decode_token(self) -> dict:
@@ -101,7 +120,3 @@ class CS3BaseMixin(CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, 
     @property
     def user_opaque_id(self) -> str:
         return self._decode_token()["user"]["id"]["opaque_id"]
-
-class CS3Mixin(CS3BaseMixin, CS3VirtualFileSystem):
-    """CS3Mixin combines the base mixin with the virtual file system operations."""
-    pass
