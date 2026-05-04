@@ -56,7 +56,6 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
     )
     lock_not_impl = Bool(default_value=False, config=True, help="Lock not implemented flag")
     lock_as_attr = Bool(default_value=False, config=True, help="Lock as attribute flag")
-    cs3_token = Unicode(default_value="", config=True, help="CS3 authentication token")
     client_id = Unicode(default_value="", config=True, help="CS3 client ID (can be set in config)")
 
 
