@@ -6,33 +6,108 @@ Utilities for file-based Contents/Checkpoints managers.
 
 from __future__ import annotations
 
+from base64 import decodebytes
 import errno
 import os
 from contextlib import contextmanager
 from typing import Generator, TYPE_CHECKING
 import nbformat
 
+
+
 from tornado.web import HTTPError
 from traitlets.config.configurable import LoggingConfigurable
 from anyio.to_thread import run_sync
 
 from jupyter_server.utils import ApiPath, to_api_path, to_os_path
-from .cs3mixin import CS3BaseMixin, CS3Mixin
+from .cs3mixin import CS3Mixin
 
 
 if TYPE_CHECKING:
     from .cs3vfs.cs3vfs import CS3File
 
-class CS3HybridFileManagerMixin(CS3BaseMixin, LoggingConfigurable):
+
+class CS3HybridFileManagerMixin(CS3Mixin, LoggingConfigurable):
     """
     Mixin for ContentsAPI classes that interact with the filesystem asynchronously.
     """
-    # TODO: Add locking via the CS3APIs here
+
+
+    def touch(self,path):
+        with open(path, 'a'):
+            os.utime(path, None)
+
     @contextmanager
     def open(self, os_path, *args, **kwargs):
         """wrapper around io.open that turns permission errors into 403"""
-        with self.perm_to_403(os_path), open(os_path, *args, **kwargs) as f:
+        self.acquire_or_refresh_lock(os_path)
+        try:
+            with self.perm_to_403(os_path), self.cs3open(os_path, *args, **kwargs) as f:
+                yield f
+        # If we are trying to open a newly created jupyter notebook then
+        # it won't be available immediately via Reva since it's created via fuse
+        # and it needs to be openend via the fuse mount.
+        # NOTE: open, cs3open, and self.open are different calls.
+        except Exception:
+            with self.perm_to_403(os_path), open(os_path, *args, **kwargs) as f:
+                yield f
+
+    # We have to overwrite atomic_writing to use our own open method.
+    @contextmanager
+    def atomic_writing(self, path: str, *, text: bool = True, encoding: str = "utf-8", **kwargs) -> Generator['CS3File', None, None]:
+        """Context manager for writing to CS3."""
+        mode = "w" if text else "wb"
+        with self.open(path, mode, encoding=encoding) as f:
             yield f
+
+
+    def _save_file(self, os_path, content, format):
+        """Save content of a generic file."""
+        # We check if this is a new file, is so write it via fuse instead
+        # this is because jupyter lab opens the file immediately after creating it
+        # and it won't be available in the fuse mount that fast.
+        if content == "" or content is None:
+            self.touch(os_path)
+            return
+        if format not in {"text", "base64"}:
+            raise HTTPError(
+                400,
+                "Must specify format of file contents as 'text' or 'base64'",
+            )
+        try:
+            if format == "text":
+                bcontent = content.encode("utf8")
+            else:
+                b64_bytes = content.encode("ascii")
+                bcontent = decodebytes(b64_bytes)
+        except Exception as e:
+            raise HTTPError(400, f"Encoding error saving {os_path}: {e}") from e
+
+        with self.atomic_writing(os_path, text=False) as f:
+            f.write(bcontent)
+
+    def _save_notebook(self, os_path, nb, capture_validation_error=None):
+        """Save a notebook to an os_path."""
+        # We check if this is a new file, is so write it via fuse instead
+        # this is because jupyter lab opens the file immediately after creating it
+        # and it won't be available in the fuse mount that fast.
+        if nb == nbformat.v4.new_notebook():
+            with open(os_path, "w") as f:
+                nbformat.write(
+                    nb,
+                    f,
+                    version=nbformat.NO_CONVERT,
+                    capture_validation_error=capture_validation_error,
+                )
+            return
+        with self.atomic_writing(os_path, encoding="utf-8") as f:
+            nbformat.write(
+                nb,
+                f,
+                version=nbformat.NO_CONVERT,
+                capture_validation_error=capture_validation_error,
+            )
+
 
 
 class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
@@ -43,6 +118,7 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
     @contextmanager
     def open(self, os_path, *args, **kwargs):
         """wrapper around io.open that turns permission errors into 403"""
+        self.acquire_or_refresh_lock(os_path)
         with self.perm_to_403(os_path), self.cs3open(os_path, *args, **kwargs) as f:
             yield f
 
@@ -131,16 +207,11 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
 
     # We use this instead of atomic writing, let reva handle it
     @contextmanager
-    def writing(self, path: str, text: bool = True, encoding: str = "utf-8", **kwargs) -> Generator['CS3File', None, None]:
+    def writing(self, path: str, *, text: bool = True, encoding: str = "utf-8", **kwargs) -> Generator['CS3File', None, None]:
         """Context manager for writing to CS3."""
         mode = "w" if text else "wb"
         with self.open(path, mode, encoding=encoding) as f:
             yield f
-
-    def _vfs_save_file(self, os_path: str, content, format: str) -> None:
-        """Sync helper to save via CS3VirtualFileSystem._save_file."""
-        # CS3Mixin ultimately inherits CS3VirtualFileSystem where _save_file is implemented.
-        CS3Mixin._save_file(self, os_path, content, format)  # type: ignore[attr-defined]
 
     async def _save_notebook(self, os_path, nb, capture_validation_error=None):
         """Save a notebook to an os_path."""
@@ -149,7 +220,7 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
             version=nbformat.NO_CONVERT,
             capture_validation_error=capture_validation_error,
         )
-        await run_sync(self._vfs_save_file, os_path, nb_text, "text")
+        await run_sync(self.vfs_save_file, os_path, nb_text, "text")
 
     async def _save_file(self, os_path, content, format):
         """Save content of a generic file."""
@@ -158,7 +229,7 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
                 400,
                 "Must specify format of file contents as 'text' or 'base64'",
             )
-        await run_sync(self._vfs_save_file, os_path, content, format)
+        await run_sync(self.vfs_save_file, os_path, content, format)
 
     # replaced with CS3 functionality
     async def _read_file(  # type: ignore[override]

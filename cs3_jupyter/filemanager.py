@@ -290,3 +290,27 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
     @default("checkpoints_class")
     def _checkpoints_class_default(self):
         return CS3FileCheckpoints
+
+    def lock_is_ours(self, path):
+        # This attribute is the one used by EOS to indicate a lock,
+        # we check if it's there and if it is, if it's ours.
+        if "eos.sys.app.lock" not in os.listxattr(path):
+            return True
+        value = os.getxattr(path, "eos.sys.app.lock")
+        if isinstance(value, bytes):
+            value = value.decode("utf-8", errors="replace")
+        return self.lock_app_name in value
+
+    # The notebook model has to be overwritten so we can include
+    # locking information to determine if the file is writable or not
+    def _notebook_model(self, path, content=True, require_hash=False):
+        model = super()._notebook_model(path, content=content, require_hash=require_hash)
+        model["writable"] = self.lock_is_ours(self._get_os_path(path)) and model["writable"]
+        return model
+
+    # The file model has to be overwritten so we can include
+    # locking information to determine if the file is writable or not
+    def _file_model(self, path, content=True, format=None, require_hash=False):
+        model = super()._file_model(path, content=content, format=format, require_hash=require_hash)
+        model["writable"] = self.lock_is_ours(self._get_os_path(path)) and model["writable"]
+        return model

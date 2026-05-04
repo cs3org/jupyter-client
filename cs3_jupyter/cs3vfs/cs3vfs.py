@@ -225,7 +225,7 @@ class CS3VirtualFileSystem:
         return (b64_content, "base64", bcontent) if raw else (b64_content, "base64")
 
     @retry_on_auth_failure
-    def _save_file(self, path: str, content: Union[str, bytes], format: str) -> None:
+    def vfs_save_file(self, path: str, content: Union[str, bytes], format: str) -> None:
         """Save a file with CS3."""
         try:
             if format == "text":
@@ -241,7 +241,9 @@ class CS3VirtualFileSystem:
                 self.auth.get_token(),
                 resource,
                 bcontent,
-                len(bcontent)
+                len(bcontent),
+                self.lock_app_name,
+                self.lock_value
             )
         except Exception as e:
             self.status_handler.handle_errors(e)
