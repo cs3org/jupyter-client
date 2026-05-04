@@ -1,6 +1,17 @@
-# sharing/__init__.py
-from .sharing import default_handlers
 from jupyter_server.utils import url_path_join
+
+from .sharing import default_handlers as sharing_handlers
+from .lock import default_handlers as lock_handlers
+from .users import default_handlers as users_handlers
+from .storage import default_handlers as storage_handlers
+
+
+default_handlers = [
+    *sharing_handlers,
+    *lock_handlers,
+    *users_handlers,
+    *storage_handlers,
+]
 
 
 def _load_jupyter_server_extension(serverapp):
