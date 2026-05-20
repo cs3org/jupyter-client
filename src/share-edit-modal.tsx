@@ -1,127 +1,31 @@
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { createPortal } from 'react-dom';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { ReactWidget } from '@jupyterlab/ui-components';
 import { Widget } from '@lumino/widgets';
 import {
   ShareGranteeDetail,
-  ShareRole,
   UserSearchResult,
   GroupSearchResult,
   fetchSharesForResource,
   removeShare,
-  updateShareRole,
   createShare,
   findUsers,
   findGroups
 } from './shares';
 import { createDebouncedFetcher } from './debounce';
-import { ViewIcon, EditIcon, TrashIcon, UserEmoji, GroupEmoji } from './icons';
+import { TrashIcon, UserEmoji, GroupEmoji } from './icons';
 
 export interface ShareTarget {
   name: string;
   rawPath: string;
 }
 
-const ROLE_OPTIONS: { value: ShareRole; label: string; icon: React.ReactElement }[] = [
-  { value: 'VIEWER', label: 'Can view', icon: ViewIcon },
-  { value: 'EDITOR', label: 'Can edit', icon: EditIcon }
-];
-
-function RoleDropdown({
-  value,
-  onChange,
-  disabled
-}: {
-  value: ShareRole;
-  onChange: (role: ShareRole) => void;
-  disabled?: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null);
-  const ref = useRef<HTMLDivElement>(null);
-  const opt = ROLE_OPTIONS.find(o => o.value === value) ?? ROLE_OPTIONS[0];
-
-  useEffect(() => {
-    const close = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('click', close);
-    return () => document.removeEventListener('click', close);
-  }, []);
-
-  const handleToggle = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    if (disabled) return;
-    if (!open && ref.current) {
-      const rect = ref.current.getBoundingClientRect();
-      setMenuPos({ top: rect.bottom + 2, left: rect.left });
-    }
-    setOpen(!open);
-  };
-
-  return (
-    <div className="swan-shares-role-dropdown" ref={ref}>
-      <button
-        type="button"
-        className="swan-shares-role-dropdown-selected"
-        onClick={handleToggle}
-        style={disabled ? { opacity: 0.5, cursor: 'not-allowed' } : undefined}
-      >
-        {opt.icon}
-        <span>{opt.label}</span>
-      </button>
-      {open &&
-        menuPos &&
-        createPortal(
-          <div
-            className="swan-shares-role-dropdown-menu"
-            style={{ position: 'fixed', top: menuPos.top, left: menuPos.left }}
-          >
-            {ROLE_OPTIONS.map(o => (
-              <div
-                key={o.value}
-                className={`swan-shares-role-dropdown-option${o.value === value ? ' swan-shares-role-dropdown-option-active' : ''}`}
-                onClick={e => {
-                  e.stopPropagation();
-                  onChange(o.value);
-                  setOpen(false);
-                }}
-              >
-                {o.icon}
-                <span>{o.label}</span>
-              </div>
-            ))}
-          </div>,
-          document.body
-        )}
-    </div>
-  );
-}
-
 function GranteeItem({
   grantee,
-  onRoleChange,
   onRemove
 }: {
   grantee: ShareGranteeDetail;
-  onRoleChange: (shareId: string, role: ShareRole) => Promise<void>;
   onRemove: (shareId: string) => Promise<void>;
 }) {
-  const [busy, setBusy] = useState(false);
-  const [role, setRole] = useState(grantee.role);
-
-  const handleRole = async (newRole: ShareRole) => {
-    setBusy(true);
-    try {
-      await onRoleChange(grantee.shareId, newRole);
-      setRole(newRole);
-    } catch {
-      setRole(role);
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="swan-shares-grantee-item">
       <div className="swan-shares-grantee-info">
@@ -130,7 +34,6 @@ function GranteeItem({
         </span>
         <span className="swan-shares-grantee-name">{grantee.opaqueId}</span>
       </div>
-      <RoleDropdown value={role} onChange={handleRole} disabled={busy} />
       <button className="swan-shares-grantee-remove" title="Remove" onClick={() => onRemove(grantee.shareId)}>
         {TrashIcon}
       </button>
@@ -186,7 +89,6 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
   const [grantees, setGrantees] = useState<ShareGranteeDetail[]>([]);
   const [granteesLoading, setGranteesLoading] = useState(true);
   const [granteesError, setGranteesError] = useState<string | null>(null);
-  const [addRole, setAddRole] = useState<ShareRole>('VIEWER');
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<{ users: UserSearchResult[]; groups: GroupSearchResult[] } | null>(
     null
@@ -254,16 +156,6 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
     return fetcher.cancel;
   }, [searchQuery, fetcher]);
 
-  const handleRoleChange = async (shareId: string, newRole: ShareRole) => {
-    try {
-      await updateShareRole(shareId, newRole);
-      setGrantees(prev => prev.map(g => (g.shareId === shareId ? { ...g, role: newRole } : g)));
-    } catch (err) {
-      showStatus(`Failed to update role: ${err instanceof Error ? err.message : 'Unknown error'}`, true);
-      throw err;
-    }
-  };
-
   const handleRemove = async (shareId: string) => {
     try {
       await removeShare(shareId);
@@ -273,12 +165,13 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
     }
   };
 
+  // We only support read-only (VIEWER) shares for now.
   const handleAddUser = async (user: UserSearchResult) => {
     try {
-      await createShare(share.rawPath, user.opaqueId, user.idp, addRole, 'GRANTEE_TYPE_USER');
+      await createShare(share.rawPath, user.opaqueId, user.idp, 'VIEWER', 'GRANTEE_TYPE_USER');
       setGrantees(prev => [
         ...prev,
-        { shareId: `pending-${user.opaqueId}`, type: 'GRANTEE_TYPE_USER', opaqueId: user.opaqueId, role: addRole }
+        { shareId: `pending-${user.opaqueId}`, type: 'GRANTEE_TYPE_USER', opaqueId: user.opaqueId, role: 'VIEWER' }
       ]);
       loadGrantees(true);
     } catch (err) {
@@ -289,10 +182,10 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
 
   const handleAddGroup = async (group: GroupSearchResult) => {
     try {
-      await createShare(share.rawPath, group.opaqueId, '', addRole, 'GRANTEE_TYPE_GROUP');
+      await createShare(share.rawPath, group.opaqueId, '', 'VIEWER', 'GRANTEE_TYPE_GROUP');
       setGrantees(prev => [
         ...prev,
-        { shareId: `pending-${group.opaqueId}`, type: 'GRANTEE_TYPE_GROUP', opaqueId: group.opaqueId, role: addRole }
+        { shareId: `pending-${group.opaqueId}`, type: 'GRANTEE_TYPE_GROUP', opaqueId: group.opaqueId, role: 'VIEWER' }
       ]);
       loadGrantees(true);
     } catch (err) {
@@ -321,9 +214,6 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
           <div className="swan-shares-modal-section">
             <div className="swan-shares-modal-section-title">Share with people</div>
             <div className="swan-shares-search-container">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px' }}>
-                <RoleDropdown value={addRole} onChange={setAddRole} />
-              </div>
               <input
                 className="swan-shares-search-input"
                 type="text"
@@ -381,7 +271,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
               <div className="swan-shares-modal-section-title">Shared with</div>
               <div className="swan-shares-grantee-list">
                 {grantees.map(g => (
-                  <GranteeItem key={g.shareId} grantee={g} onRoleChange={handleRoleChange} onRemove={handleRemove} />
+                  <GranteeItem key={g.shareId} grantee={g} onRemove={handleRemove} />
                 ))}
               </div>
             </div>
