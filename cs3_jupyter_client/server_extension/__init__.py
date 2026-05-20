@@ -1,10 +1,14 @@
 # sharing/__init__.py
 from .sharing import default_handlers
 from jupyter_server.utils import url_path_join
+from ..sharing_client import CS3SharingClient
 
 
 def _load_jupyter_server_extension(serverapp):
-    # Called when the extension loads; attach handlers here.
+    sharing_client = CS3SharingClient(parent=serverapp)
+    # Make the sharing client available to the handlers
+    serverapp.web_app.settings["cs3_sharing_client"] = sharing_client
+
     setup_handlers(serverapp.web_app)
     serverapp.log.info("sharing extension loaded")
 
