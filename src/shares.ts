@@ -84,6 +84,7 @@ interface WithMeRegularShare extends _Share {
   shareDirection: 'WITH_ME';
   shareType: 'REGULAR';
   sharedBy: string;
+  role: ShareRole;
 }
 
 export type Share = ByMeRegularShare | ByMePublicShare | WithMeRegularShare;
@@ -168,11 +169,17 @@ export async function fetchShares(): Promise<Share[]> {
       name: share.resource_info.name,
       path: share.resource_info.path.slice('/eos'.length), // TODO: Don't hardcode this prefix
       rawPath: share.resource_info.path,
-      sharedBy: share.received_share.share.creator.opaque_id
+      sharedBy: share.received_share.share.creator.opaque_id,
+      role: roleFromRawPermissions(
+        (share.received_share.share as Record<string, unknown>).permissions as Record<string, unknown> | undefined
+      )
     });
   }
 
-  return [...byMeMerged.values(), ...byMePublicMerged.values(), ...withMeMerged.values()];
+  // Keep only read-only shares
+  const readOnlyWithMe = [...withMeMerged.values()].filter(s => s.role === 'VIEWER');
+
+  return [...byMeMerged.values(), ...byMePublicMerged.values(), ...readOnlyWithMe];
 }
 
 export interface ShareGranteeDetail {
