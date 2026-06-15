@@ -45,7 +45,7 @@ The CS3 Contents Manager consists of several key components:
 
 ### JupyterLab Extension
 
-The bundled labextension (`@cs3org/cs3-jupyter-client`) provides three plugins:
+The bundled labextension (`@cs3org/cs3-jupyter`) provides three plugins:
 
 - **Spaces** - sidebar panel listing CERNBox Spaces (projects) the user has access to
 - **Shares** - sidebar panel showing incoming and outgoing CERNBox shared folders
@@ -92,7 +92,7 @@ jupyter lab \
 Add the following to your `jupyter_server_config.py`:
 
 ```python
-from cs3_jupyter_client.cs3largefilemanager import CS3LargeFileManager
+from cs3_jupyter.cs3largefilemanager import CS3LargeFileManager
 
 c.ServerApp.contents_manager_class = CS3LargeFileManager
 c.CS3FileManagerMixin.host = '<host>'
