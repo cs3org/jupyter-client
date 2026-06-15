@@ -13,7 +13,7 @@ import { openEditShareModal } from './share-edit-modal';
  * to the corresponding EOS path.
  */
 const sharesPlugin: JupyterFrontEndPlugin<void> = {
-  id: '@cs3org/cs3-jupyter-client:shares',
+  id: '@cs3org/cs3-jupyter:shares',
   description: 'Browse CERNBox shared folders from the JupyterLab sidebar',
   autoStart: true,
   requires: [IDefaultFileBrowser, IDocumentManager],
@@ -24,7 +24,7 @@ const sharesPlugin: JupyterFrontEndPlugin<void> = {
     docManager: IDocumentManager,
     labShell: ILabShell | null
   ) => {
-    console.log('[cs3org/cs3-jupyter-client] Activating shares plugin');
+    console.log('[cs3org/cs3-jupyter] Activating shares plugin');
 
     const widget = new SharesWidget(fileBrowser, app.shell, app.commands, docManager.registry);
     widget.title.icon = shareIcon;
@@ -35,7 +35,7 @@ const sharesPlugin: JupyterFrontEndPlugin<void> = {
       app.shell.add(widget, 'left');
     }
 
-    const SHARE_COMMAND = '@cs3org/cs3-jupyter-client:share-file';
+    const SHARE_COMMAND = '@cs3org/cs3-jupyter:share-file';
 
     app.commands.addCommand(SHARE_COMMAND, {
       label: 'Share',

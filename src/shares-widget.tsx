@@ -133,7 +133,7 @@ function SharesPanel({
         shell.activateById(fileBrowser.id);
       }
     } catch (err) {
-      console.error(`[cs3org/cs3-jupyter-client:shares] Failed to open ${share.path}:`, err);
+      console.error(`[cs3org/cs3-jupyter:shares] Failed to open ${share.path}:`, err);
     }
   };
 

@@ -1,7 +1,7 @@
 {
   "ServerApp": {
     "jpserver_extensions": {
-      "cs3_jupyter_client": true
+      "cs3_jupyter": true
     }
   }
 }

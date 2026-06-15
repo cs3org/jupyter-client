@@ -1,5 +1,5 @@
 {
-  "name": "@cs3org/cs3-jupyter-client",
+  "name": "@cs3org/cs3-jupyter",
   "version": "0.1.0",
   "description": "A JupyterLab extension providing CERNBox integration",
   "keywords": [
@@ -37,7 +37,7 @@
     "build:labextension:dev": "jupyter labextension build --development True .",
     "clean": "jlpm clean:lib && jlpm clean:labextension",
     "clean:lib": "rimraf lib tsconfig.tsbuildinfo",
-    "clean:labextension": "rimraf cs3_jupyter_client/labextension cs3_jupyter_client/_version.py",
+    "clean:labextension": "rimraf cs3_jupyter/labextension cs3_jupyter/_version.py",
     "install:extension": "jlpm build",
     "lint": "jlpm stylelint && jlpm prettier && jlpm eslint",
     "lint:check": "jlpm stylelint:check && jlpm prettier:check && jlpm eslint:check",
@@ -72,7 +72,7 @@
   },
   "jupyterlab": {
     "extension": true,
-    "outputDir": "cs3_jupyter_client/labextension",
+    "outputDir": "cs3_jupyter/labextension",
     "schemaDir": "schema"
   }
 }
