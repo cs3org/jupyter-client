@@ -96,17 +96,41 @@ from cs3_jupyter.cs3largefilemanager import CS3LargeFileManager
 
 c.ServerApp.contents_manager_class = CS3LargeFileManager
 c.CS3FileManagerMixin.host = '<host>'
+# Keep TUS disabled while locking is enabled: cs3-python-client sends a
+# misspelled X-Lock_Holder header on the TUS branch (cs3client/file.py), so
+# locked writes would be rejected by EOS holder matching.
 c.CS3FileManagerMixin.tus_enabled = False
 c.CS3FileManagerMixin.ssl_enabled = False
 c.CS3FileManagerMixin.token_path = '/path/to/oauth.token'
 c.CS3FileManagerMixin.auth_login_type = 'bearer'
 c.CS3FileManagerMixin.authtokenvalidity = 3600
 c.CS3FileManagerMixin.lock_not_impl = False
-c.CS3FileManagerMixin.lock_as_attr = False
+c.CS3FileManagerMixin.lock_by_setting_attr = False
 c.CS3FileManagerMixin.root_path = '/eos/user/r/rwelande'
 c.CS3FileManagerMixin.client_id = 'rwelande'
 c.CS3LargeFileManager.max_copy_folder_size_mb = 500
 ```
+
+### Locking
+
+Files being edited are locked in the storage through the CS3 APIs, so other
+applications (sync clients, web office, ...) cannot write to them concurrently.
+
+- `lock_app_name` (default `jupyter-rtc`): the CS3 lock holder ("app name").
+  EOS enforces write locks by app name, and lowercases it - keep it lowercase.
+- `lock_holder_suffix_client_id` (default `True`): appends `-<client_id>` to the
+  holder, making locks per-user (`jupyter-rtc-rwelande`). Set it to `False` on
+  all servers to share one holder (`jupyter-rtc`) so multiple users can
+  collaborate on the same locked files.
+- `lock_value` (default `jupyter_rtc_lock`): the shared lock id, required by
+  reva to refresh or release a lock.
+- `lock_expiration` (default `300` seconds): locks not refreshed within this
+  window expire in the storage; it is also the session-tracker heartbeat timeout.
+
+The `/lock` API tracks how many sessions have a document open (`POST
+/lock?path=...&session_id=...` on open and as heartbeat, `DELETE` on close) and
+releases the reva lock when the last session leaves. A background task refreshes
+locks for tracked sessions and unlocks documents whose sessions went stale.
 
 ### Authentication
 
