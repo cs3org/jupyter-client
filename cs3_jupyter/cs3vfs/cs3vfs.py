@@ -138,6 +138,19 @@ class CS3VirtualFileSystem:
             resource = resource_from_path(path)
             self.client.file.remove_file(
                 self.auth.get_token(),
+                resource,
+                lock_id=self.lock_value
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+
+    @retry_on_auth_failure
+    def vfs_touch(self, path: str) -> None:
+        """Create an empty file with CS3."""
+        try:
+            resource = resource_from_path(path)
+            self.client.file.touch_file(
+                self.auth.get_token(),
                 resource
             )
         except Exception as e:
@@ -156,7 +169,8 @@ class CS3VirtualFileSystem:
             self.client.file.rename_file(
                 self.auth.get_token(),
                 src_resource,
-                dst_resource
+                dst_resource,
+                lock_id=self.lock_value
             )
         except Exception as e:
             self.status_handler.handle_errors(e)
@@ -242,7 +256,7 @@ class CS3VirtualFileSystem:
                 resource,
                 bcontent,
                 len(bcontent),
-                self.lock_app_name,
+                self.lock_holder,
                 self.lock_value
             )
         except Exception as e:
@@ -288,8 +302,12 @@ class CS3VirtualFileSystem:
             self.log.warning(f"Error calculating directory size for {path}: {e}")
             return 0
 
-    @retry_on_auth_failure
     async def copyfile(self, src: str, dst: str) -> None:
+        """Copy file contents using streaming to avoid loading entire file in memory."""
+        self.copyfile_sync(src, dst)
+
+    @retry_on_auth_failure
+    def copyfile_sync(self, src: str, dst: str) -> None:
         """Copy file contents using streaming to avoid loading entire file in memory."""
         src_resource = resource_from_path(src)
         dst_resource = resource_from_path(dst)
