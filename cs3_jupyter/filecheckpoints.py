@@ -9,6 +9,7 @@ from jupyter_server.services.contents.checkpoints import (
     AsyncCheckpoints,
 )
 from .fileio import CS3FileManagerMixin
+from .cs3vfs.statuscodehandler import FileLockedError
 
 
 
@@ -46,8 +47,15 @@ class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
     # Restore reva checkpoint
     async def restore_checkpoint(self, contents_mgr, checkpoint_id, path):
         """Restore a checkpoint."""
+        # "0_0" is the placeholder for files without reva versions yet;
+        # there is nothing to restore.
+        if checkpoint_id == "0_0":
+            return None
         os_path = contents_mgr._get_os_path(path)
-        contents_mgr.restore_file_version(os_path, checkpoint_id)
+        try:
+            contents_mgr.restore_file_version(os_path, checkpoint_id)
+        except FileLockedError as e:
+            raise HTTPError(423, f"{path} is locked") from e
         return None
 
     # No need to construct info dict, reva handles versioning.
