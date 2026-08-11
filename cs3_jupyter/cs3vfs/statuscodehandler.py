@@ -32,7 +32,10 @@ class StatusCodeHandler:
             raise PermissionError("Permission denied")
         if isinstance(e, ValueError):
             raise ValueError("Invalid input")
-        raise OSError("Unknown error occurred")
+        # Keep the original text: reva reports several conditions (notably a
+        # missing file during a lock operation) as a generic internal error,
+        # and the message is the only thing that says which.
+        raise OSError(f"Unknown error occurred: {e}") from e
 
 class ErrorToHttpCode:
     def map_exception_to_http_code(self, e: Exception) -> int:

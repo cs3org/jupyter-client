@@ -142,16 +142,20 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
             await asyncio.sleep(interval)
             async with self._lock_mutex:
                 active, expired = self.session_tracker.sweep()
+                # A storage error must never kill the refresher: it is the only
+                # thing keeping open documents locked and stale ones released.
                 for path in expired:
                     try:
                         await run_sync(self.unlock, path, self.lock_holder, self.lock_value)
-                    except (FileLockedError, FileNotFoundError):
-                        # Not ours anymore or already gone - nothing to release.
+                    except FileLockedError:
+                        # Not ours anymore - nothing to release.
                         pass
+                    except OSError as e:
+                        self.log.warning(f"Could not release lock on {path}: {e}")
                 for path in active:
                     try:
                         await run_sync(self.refresh_lock, path, self.lock_holder, self.lock_value, self.lock_value)
-                    except (FileLockedError, FileNotFoundError) as e:
+                    except OSError as e:
                         self.log.warning(f"Lock refresh lost on {path}: {e}")
             if not active and not expired:
                 return

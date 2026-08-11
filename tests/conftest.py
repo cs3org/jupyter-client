@@ -11,6 +11,7 @@ from cs3client.exceptions import (
     AlreadyExistsException,
     FileLockedException,
     NotFoundException,
+    UnknownException,
 )
 
 import cs3_jupyter_client.cs3mixin as cs3mixin_module
@@ -40,17 +41,32 @@ class FakeCS3(object):
     *holder* (app name) only, Unlock/RefreshLock additionally require the
     matching lock id, SetLock conflicts when a lock exists, and GetLock
     raises NotFound when there is no lock.
+
+    Crucially, lock operations on a file that does not exist raise
+    UnknownException by default, not NotFoundException: the EOS driver wraps
+    the not-found, so the storage provider's type switch falls through to a
+    generic internal error. Set `missing_file_error = "not_found"` to emulate
+    a driver that reports it properly.
     """
 
     def __init__(self):
         self.files = {}  # path -> bytes | DIR
         self.locks = {}  # path -> {"app_name", "lock_id"}
+        self.missing_file_error = "unknown"
 
     # -- helpers used by tests --------------------------------------------
     def put(self, path, content=b"", lock=None):
         self.files[path] = content
         if lock:
             self.locks[path] = lock
+
+    def _missing_for_lock_op(self, operation):
+        if self.missing_file_error == "not_found":
+            return NotFoundException("not found")
+        return UnknownException(
+            f'Unknown Error: operation="{operation}" status_code="15" '
+            f'message="error {operation}: path not resolvable"'
+        )
 
     def _check_write(self, path, app_name):
         lock = self.locks.get(path)
@@ -128,22 +144,27 @@ class FakeCS3(object):
     def set_lock(self, token, resource, app_name, lock_id):
         path = resource._abs_path
         if path not in self.files:
-            raise NotFoundException("not found")
+            raise self._missing_for_lock_op("setting lock")
         if path in self.locks:
+            # errtypes.Conflict -> FAILED_PRECONDITION
             raise FileLockedException("already locked")
         self.locks[path] = {"app_name": app_name, "lock_id": lock_id}
 
     def get_lock(self, token, resource):
         path = resource._abs_path
-        if path not in self.files or path not in self.locks:
+        if path not in self.files:
+            raise self._missing_for_lock_op("getting lock")
+        if path not in self.locks:
             raise NotFoundException("no lock")
         return dict(self.locks[path])
 
     def refresh_lock(self, token, resource, app_name, lock_id, existing_lock_id=None):
         path = resource._abs_path
         if path not in self.files:
-            raise NotFoundException("not found")
+            raise self._missing_for_lock_op("refreshing lock")
         lock = self.locks.get(path)
+        # errtypes.BadRequest ("not locked" / "not the holder") ->
+        # FAILED_PRECONDITION
         if lock is None or lock["app_name"] != app_name:
             raise FileLockedException("not the holder")
         if existing_lock_id and lock["lock_id"] != existing_lock_id:
@@ -152,9 +173,11 @@ class FakeCS3(object):
 
     def unlock(self, token, resource, app_name, lock_id):
         path = resource._abs_path
+        if path not in self.files:
+            raise self._missing_for_lock_op("unlocking")
         lock = self.locks.get(path)
-        if path not in self.files or lock is None:
-            raise NotFoundException("no lock")
+        if lock is None:
+            raise FileLockedException("file was not locked")
         if lock["app_name"] != app_name or lock["lock_id"] != lock_id:
             raise FileLockedException("not the holder")
         del self.locks[path]
