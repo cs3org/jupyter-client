@@ -28,23 +28,35 @@ class CS3Lock:
         Returns LOCK_HELD if we now hold the lock, LOCK_FOREIGN if it is held
         by another holder, LOCK_NO_FILE if the file does not exist (yet).
         """
-        # If the lock is ours the refresh will succeed; on anything else
-        # (unlocked, expired, foreign holder) reva answers FAILED_PRECONDITION,
-        # surfaced as FileLockedError. Then SetLock succeeds only if unlocked.
+        # RefreshLock only succeeds when we already hold the lock. Every other
+        # outcome is reported inconsistently: "not locked" and "not the holder"
+        # come back as FAILED_PRECONDITION, but a file that does not exist
+        # surfaces as an internal error, because the EOS driver wraps - and
+        # thereby hides - the not-found from the storage provider's type
+        # switch. So treat any failure as "we do not hold it" and let SetLock,
+        # which is authoritative, decide.
         try:
             self.refresh_lock(path, self.lock_holder, self.lock_value, self.lock_value)
             return LOCK_HELD
-        except FileNotFoundError:
-            return LOCK_NO_FILE
-        except FileLockedError:
-            pass
+        except OSError as e:
+            self.log.debug(f"Could not refresh lock on {path}, trying to set it: {e}")
+
         try:
             self.set_lock(path, self.lock_holder, self.lock_value)
             return LOCK_HELD
-        except FileNotFoundError:
-            return LOCK_NO_FILE
         except FileLockedError:
             return LOCK_FOREIGN
+        except FileNotFoundError:
+            return LOCK_NO_FILE
+        except PermissionError:
+            raise
+        except OSError:
+            # SetLock hides a missing file the same way. A file that is not
+            # there yet is the normal case for a first save (it gets locked
+            # after creation), anything else is a genuine failure.
+            if not self.vfs_exists(path):
+                return LOCK_NO_FILE
+            raise
 
     def ensure_write_lock(self, os_path: str) -> str:
         """Acquire/refresh our lock before a write; 423 if a foreign holder has it.
@@ -66,12 +78,20 @@ class CS3Lock:
         """
         try:
             self.set_lock(os_path, self.lock_holder, self.lock_value)
-        except (FileLockedError, FileNotFoundError) as e:
+        except OSError as e:
+            # Best effort by design: the content is already written, and a
+            # subsequent save fails cleanly with 423 if someone else won.
             self.log.warning(f"Could not lock newly created file {os_path}: {e}")
 
     def foreign_lock_holder(self, path: str) -> Optional[str]:
         """Return the holder's app name if the path is locked by someone else, else None."""
-        lock = self.get_lock(path)
+        try:
+            lock = self.get_lock(path)
+        except OSError as e:
+            # Lock state is advisory here (the storage enforces its own), so
+            # an unreadable lock must not fail the read or the delete.
+            self.log.warning(f"Could not read lock state of {path}: {e}")
+            return None
         if lock is None:
             return None
         holder = lock.get("app_name") if isinstance(lock, dict) else getattr(lock, "app_name", "")

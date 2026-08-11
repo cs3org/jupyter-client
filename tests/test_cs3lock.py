@@ -18,6 +18,7 @@ class LockOwner(CS3Lock):
     """Minimal object exercising CS3Lock against the fake backend."""
 
     def __init__(self, fake, holder):
+        self.fake = fake
         self.client = type("C", (), {"file": fake})()
         self.auth = FakeAuth()
         self.status_handler = StatusCodeHandler()
@@ -27,6 +28,9 @@ class LockOwner(CS3Lock):
 
     def _refresh_auth(self):
         pass
+
+    def vfs_exists(self, path):
+        return path in self.fake.files
 
 
 @pytest.fixture
@@ -55,8 +59,34 @@ def test_acquire_foreign(fake, owner):
     assert owner.acquire_or_refresh_lock("/f") == LOCK_FOREIGN
 
 
-def test_acquire_missing_file(owner):
+@pytest.mark.parametrize("missing_file_error", ["unknown", "not_found"])
+def test_acquire_missing_file(fake, owner, missing_file_error):
+    """Regression: EOS reports a missing file as a generic internal error.
+
+    Creating a new notebook 500'd because that escaped as an unhandled
+    OSError instead of being reported as "the file is not there yet".
+    """
+    fake.missing_file_error = missing_file_error
     assert owner.acquire_or_refresh_lock("/nope") == LOCK_NO_FILE
+
+
+def test_acquire_existing_unlocked_file(fake, owner):
+    """RefreshLock on an unlocked file fails; SetLock must still win it."""
+    fake.put("/f")
+    assert "/f" not in fake.locks
+    assert owner.acquire_or_refresh_lock("/f") == LOCK_HELD
+
+
+def test_acquire_reraises_real_storage_errors(fake, owner, monkeypatch):
+    """An internal error on an existing file is a genuine failure, not NO_FILE."""
+    fake.put("/f")
+
+    def boom(*args, **kwargs):
+        raise OSError("storage on fire")
+
+    monkeypatch.setattr(owner, "set_lock", boom)
+    with pytest.raises(OSError, match="storage on fire"):
+        owner.acquire_or_refresh_lock("/f")
 
 
 def test_ensure_write_lock_raises_423_with_holder(fake, owner):
@@ -69,6 +99,17 @@ def test_ensure_write_lock_raises_423_with_holder(fake, owner):
 
 def test_ensure_write_lock_passes_through_no_file(owner):
     assert owner.ensure_write_lock("/nope") == LOCK_NO_FILE
+
+
+def test_foreign_lock_holder_survives_unreadable_lock_state(fake, owner, monkeypatch):
+    """An unreadable lock must not fail the read it was only annotating."""
+    fake.put("/f")
+
+    def boom(*args, **kwargs):
+        raise OSError("storage on fire")
+
+    monkeypatch.setattr(owner, "get_lock", boom)
+    assert owner.foreign_lock_holder("/f") is None
 
 
 def test_lock_after_create_best_effort(fake, owner):
