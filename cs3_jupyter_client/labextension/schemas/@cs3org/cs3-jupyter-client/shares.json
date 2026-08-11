@@ -1,8 +1,0 @@
-{
-  "jupyter.lab.setting-icon-label": "CERNBox Shares",
-  "title": "CERNBox Shares",
-  "description": "Settings for the CERNBox Shares sidebar",
-  "type": "object",
-  "properties": {},
-  "additionalProperties": false
-}

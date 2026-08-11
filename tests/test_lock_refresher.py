@@ -6,8 +6,8 @@ import time
 
 import pytest
 
-from cs3_jupyter_client.cs3mixin import CS3Mixin
-from cs3_jupyter_client.sessiontracker import SessionTracker
+from cs3_jupyter.cs3mixin import CS3Mixin
+from cs3_jupyter.sessiontracker import SessionTracker
 
 
 class Stub:

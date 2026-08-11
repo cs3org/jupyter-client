@@ -8,7 +8,7 @@ from tornado.httpclient import HTTPClientError
 
 from jupyter_server.services.contents.largefilemanager import AsyncLargeFileManager
 
-from cs3_jupyter_client.sessiontracker import SessionTracker
+from cs3_jupyter.sessiontracker import SessionTracker
 
 pytest_plugins = ["pytest_jupyter.jupyter_server"]
 
@@ -46,7 +46,7 @@ def jp_server_config():
     return {
         "ServerApp": {
             "contents_manager_class": FakeLockCM,
-            "jpserver_extensions": {"cs3_jupyter_client.server_extension": True},
+            "jpserver_extensions": {"cs3_jupyter.server_extension": True},
         }
     }
 

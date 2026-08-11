@@ -10,7 +10,7 @@ import nbformat
 import pytest
 from tornado.web import HTTPError
 
-from cs3_jupyter_client.cs3largefilemanager import CS3HybridLargeFileManager
+from cs3_jupyter.cs3largefilemanager import CS3HybridLargeFileManager
 
 from conftest import make_manager
 
