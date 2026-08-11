@@ -3,13 +3,13 @@ import logging
 import pytest
 from tornado.web import HTTPError
 
-from cs3_jupyter_client.cs3vfs.cs3lock import (
+from cs3_jupyter.cs3vfs.cs3lock import (
     CS3Lock,
     LOCK_FOREIGN,
     LOCK_HELD,
     LOCK_NO_FILE,
 )
-from cs3_jupyter_client.cs3vfs.statuscodehandler import StatusCodeHandler
+from cs3_jupyter.cs3vfs.statuscodehandler import StatusCodeHandler
 
 from conftest import FakeAuth, FakeCS3
 
@@ -145,7 +145,7 @@ def test_shared_holder_migration_makes_servers_coholders(fake):
 
 
 def test_lock_holder_property_suffix():
-    from cs3_jupyter_client.cs3mixin import CS3Mixin
+    from cs3_jupyter.cs3mixin import CS3Mixin
 
     holder = CS3Mixin.lock_holder.fget
 

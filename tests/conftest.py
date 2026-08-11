@@ -14,7 +14,7 @@ from cs3client.exceptions import (
     UnknownException,
 )
 
-import cs3_jupyter_client.cs3mixin as cs3mixin_module
+import cs3_jupyter.cs3mixin as cs3mixin_module
 
 DIR = object()  # sentinel value marking a directory entry
 

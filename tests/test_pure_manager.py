@@ -3,11 +3,12 @@
 import asyncio
 
 import pytest
+from cs3client.exceptions import AlreadyExistsException
 from tornado.web import HTTPError
 
-from cs3_jupyter_client.cs3largefilemanager import CS3LargeFileManager
+from cs3_jupyter.cs3largefilemanager import CS3LargeFileManager
 
-from conftest import make_manager
+from conftest import DIR, make_manager
 
 ROOT = "/fakeroot"
 
@@ -15,8 +16,33 @@ ROOT = "/fakeroot"
 @pytest.fixture
 def manager(patch_cs3):
     patch_cs3.put(ROOT)  # root exists...
-    patch_cs3.files[ROOT] = __import__("conftest").DIR  # ...as a directory
+    patch_cs3.files[ROOT] = DIR  # ...as a directory
     return make_manager(CS3LargeFileManager, patch_cs3, root_path=ROOT)
+
+
+@pytest.fixture
+def strict_manager(manager, patch_cs3):
+    """A manager whose backend refuses to clobber, the way reva/EOS does.
+
+    The shared fake lets make_dir and rename_file overwrite silently, which
+    hides guards that never fire. These tests need the storage to object.
+    """
+    plain_make_dir = patch_cs3.make_dir
+    plain_rename = patch_cs3.rename_file
+
+    def make_dir(token, resource):
+        if resource._abs_path in patch_cs3.files:
+            raise AlreadyExistsException("exists")
+        plain_make_dir(token, resource)
+
+    def rename_file(token, resource, newresource, lock_id=None):
+        if newresource._abs_path in patch_cs3.files:
+            raise AlreadyExistsException("exists")
+        plain_rename(token, resource, newresource, lock_id=lock_id)
+
+    patch_cs3.make_dir = make_dir
+    patch_cs3.rename_file = rename_file
+    return manager
 
 
 def test_save_new_file_creates_and_locks(manager, patch_cs3):
@@ -62,6 +88,43 @@ def test_rename_foreign_locked_rejected(manager, patch_cs3):
     with pytest.raises(HTTPError) as exc:
         asyncio.run(manager.rename_file("f.txt", "g.txt"))
     assert exc.value.status_code == 423
+
+
+def test_mkdir_over_existing_directory_is_a_noop(strict_manager, patch_cs3):
+    """Regression: _save_directory fed self.exists() an OS path.
+
+    exists() takes an API path and re-prefixes it with root_dir, so the guard
+    never matched and every mkdir was pushed to the storage. reva answers
+    ALREADY_EXISTS, which surfaced as a 500 instead of a quiet no-op.
+    """
+    patch_cs3.files[f"{ROOT}/existing"] = DIR
+    asyncio.run(strict_manager.save({"type": "directory"}, "existing"))
+    assert patch_cs3.files[f"{ROOT}/existing"] is DIR
+
+
+def test_mkdir_over_existing_file_is_400(strict_manager, patch_cs3):
+    patch_cs3.put(f"{ROOT}/f.txt", b"x")
+    with pytest.raises(HTTPError) as exc:
+        asyncio.run(strict_manager.save({"type": "directory"}, "f.txt"))
+    assert exc.value.status_code == 400
+    assert "Not a directory" in exc.value.log_message
+
+
+def test_rename_onto_existing_is_409_not_500(strict_manager, patch_cs3):
+    """The clash must be caught here, not bubble up as a storage error."""
+    patch_cs3.put(f"{ROOT}/a.txt", b"a")
+    patch_cs3.put(f"{ROOT}/b.txt", b"b")
+    with pytest.raises(HTTPError) as exc:
+        asyncio.run(strict_manager.rename_file("a.txt", "b.txt"))
+    assert exc.value.status_code == 409
+    assert patch_cs3.files[f"{ROOT}/a.txt"] == b"a"  # source untouched
+
+
+def test_rename_to_free_name_succeeds(strict_manager, patch_cs3):
+    patch_cs3.put(f"{ROOT}/a.txt", b"a")
+    asyncio.run(strict_manager.rename_file("a.txt", "fresh.txt"))
+    assert patch_cs3.files[f"{ROOT}/fresh.txt"] == b"a"
+    assert f"{ROOT}/a.txt" not in patch_cs3.files
 
 
 def test_chunked_upload_assembles_file(manager, patch_cs3):

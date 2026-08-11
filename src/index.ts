@@ -1,8 +1,9 @@
 import { ILabShell, JupyterFrontEnd, JupyterFrontEndPlugin } from '@jupyterlab/application';
 import { IDocumentManager, IDocumentWidgetOpener } from '@jupyterlab/docmanager';
 import { IDefaultFileBrowser } from '@jupyterlab/filebrowser';
-import { shareIcon, cernboxIcon } from './icons';
+import { shareIcon, cernboxIcon, spacesIcon } from './icons';
 import { SharesWidget } from './shares-widget';
+import { SpacesWidget } from './spaces-widget';
 import { openEditShareModal } from './share-edit-modal';
 import { attachQuotaIndicator } from './quota-widget';
 import { DocumentLockTracker } from './locking';
@@ -126,4 +127,3 @@ const lockingPlugin: JupyterFrontEndPlugin<void> = {
 };
 
 export default [sharesPlugin, spacesPlugin, quotaPlugin, lockingPlugin];
-export default [sharesPlugin];
