@@ -14,7 +14,7 @@ class UpstreamLargeFileManager(UpstreamFileManager):
     """Handle large file upload asynchronously"""
 
     # Copied from upstream AsyncLargeFileManager.save. We cannot inherit
-    # AsyncLargeFileManager: its chunk-1 `super()._save_file(...)` would resolve
+    # AsyncLargeFileManager: its chunk == 1 `super()._save_file(...)` would resolve
     # to the local-disk mixin instead of the CS3 one, silently writing to disk.
     async def save(self, model, path=""):
         """Save the file model and return the model with no content."""

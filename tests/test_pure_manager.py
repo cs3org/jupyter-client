@@ -127,6 +127,25 @@ def test_rename_to_free_name_succeeds(strict_manager, patch_cs3):
     assert f"{ROOT}/a.txt" not in patch_cs3.files
 
 
+def test_model_build_stats_once(manager, patch_cs3):
+    """exists(), is_dir(), lstat() and access() are all the same Stat."""
+    patch_cs3.put(f"{ROOT}/f.txt", b"hello")
+    patch_cs3.calls.clear()
+    asyncio.run(manager.get("f.txt", content=False))
+    assert patch_cs3.calls["stat"] == 1
+
+
+def test_copy_streams_server_side_without_locking(manager, patch_cs3):
+    """A copy destination is a new file, not an open document: no lock on it."""
+    patch_cs3.put(f"{ROOT}/a.txt", b"x")
+
+    model = asyncio.run(manager.copy("a.txt"))
+
+    assert patch_cs3.files[f"{ROOT}/a-Copy1.txt"] == b"x"
+    assert model["path"].lstrip("/") == "a-Copy1.txt"
+    assert patch_cs3.locks == {}
+
+
 def test_chunked_upload_assembles_file(manager, patch_cs3):
     """Regression: without a chunk-aware save every chunk truncate-overwrote."""
     asyncio.run(manager.save({"type": "file", "content": "aa", "format": "text", "chunk": 1}, "big.txt"))

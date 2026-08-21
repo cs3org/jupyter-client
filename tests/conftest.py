@@ -2,6 +2,8 @@
 
 import logging
 import time
+from collections import Counter
+from functools import wraps
 from types import SimpleNamespace
 
 import pytest
@@ -49,10 +51,29 @@ class FakeCS3(object):
     a driver that reports it properly.
     """
 
+    # Every RPC a manager can make, counted. Round-trips are the thing these
+    # managers are slow at, so the count is worth asserting on directly.
+    _RPCS = (
+        "stat", "touch_file", "write_file", "read_file", "remove_file",
+        "rename_file", "make_dir", "list_dir",
+        "set_lock", "get_lock", "refresh_lock", "unlock",
+    )
+
     def __init__(self):
         self.files = {}  # path -> bytes | DIR
         self.locks = {}  # path -> {"app_name", "lock_id"}
         self.missing_file_error = "unknown"
+        self.calls = Counter()  # rpc name -> times invoked
+        for name in self._RPCS:
+            setattr(self, name, self._counted(getattr(self, name)))
+
+    def _counted(self, method):
+        @wraps(method)
+        def wrapper(*args, **kwargs):
+            self.calls[method.__name__] += 1
+            return method(*args, **kwargs)
+
+        return wrapper
 
     # -- helpers used by tests --------------------------------------------
     def put(self, path, content=b"", lock=None):
