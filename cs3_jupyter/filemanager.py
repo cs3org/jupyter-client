@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import errno
 import os
+import shutil
 import stat
 from datetime import datetime
 from pathlib import Path
@@ -77,25 +78,15 @@ class CS3FileContentsManager(CS3FileManagerMixin):
     def _checkpoints_class_default(self):
         return CS3FileCheckpoints
 
-    # Different implementation than upstream (we don't need atomic writing)
-    def is_writable(self, path, use_cache=True):
+    # Upstream uses os.access; caching is left to the TTL stat cache under
+    # self.access, which - unlike a per-path dict - expires and is invalidated
+    # by mutations.
+    def is_writable(self, path):
         """Does the API style path correspond to a writable directory or file?"""
-        if use_cache and hasattr(self, '_writable_cache'):
-            if path in self._writable_cache:
-                return self._writable_cache[path]
-
         path = path.strip("/")
         os_path = self._get_os_path(path=path)
         try:
-            result = self.access(os_path, os.W_OK)
-
-            # Cache the result
-            if use_cache:
-                if not hasattr(self, '_writable_cache'):
-                    self._writable_cache = {}
-                self._writable_cache[path] = result
-
-            return result
+            return self.access(os_path, os.W_OK)
         except OSError:
             self.log.error("Failed to check write permissions on %s", os_path)
             return False
@@ -241,28 +232,14 @@ class CS3FileContentsManager(CS3FileManagerMixin):
             from_dir = ""
             from_name = path
 
-        model = await self.get(path)
+        ## content=False: this model is only consulted for its type - fetching
+        ## the bytes here meant every copy read the whole file for nothing.
+        model = await self.get(path, content=False)
         # limit the size of folders being copied to prevent a timeout error
         if model["type"] == "directory":
             await self.check_folder_size(path)
         else:
             # Copied from AsyncContentManager and OS functionality replaced with cs3_fs functionality
-            path = from_path.strip("/")
-
-            if to_path is not None:
-                to_path = to_path.strip("/")
-
-            if "/" in path:
-                from_dir, from_name = path.rsplit("/", 1)
-            else:
-                from_dir = ""
-                from_name = path
-
-            # Ensure source exists and is a file
-            src_model = await self.get(path, content=False)
-            if src_model["type"] == "directory":
-                raise HTTPError(400, "Can't copy directories")
-
             is_destination_specified = to_path is not None
             if not is_destination_specified:
                 to_path = from_dir
@@ -441,21 +418,47 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         return model
 
     def _dir_model(self, path, content=True):
-        """Build a model for a directory"""
+        """Build a model for a directory.
+
+        The mount is the fast path, but it cannot see what we changed through
+        CS3 until its own cache expires - so a notebook renamed via reva kept
+        being listed under its old name. While the mount still disagrees about
+        something we touched (or has not seen the directory at all), the names
+        come from CS3; each entry's model is then built by self.get, which is
+        already FUSE-first with a CS3 fallback.
+        """
         os_path = self._get_os_path(path)
         if not self.hybrid_isdir(os_path):
             raise web.HTTPError(404, "directory does not exist: %r" % path)
-        if not os.path.isdir(os_path):
-            # The directory exists in CS3 but has not appeared in the mount
-            # yet: serve an empty model rather than failing the post-create get.
-            model = self._base_model(path)
-            model["type"] = "directory"
-            model["size"] = None
-            if content:
-                model["content"] = []
-                model["format"] = "json"
-            return model
-        return super()._dir_model(path, content=content)
+
+        if os.path.isdir(os_path) and not self.mount_lags_in(os_path):
+            return super()._dir_model(path, content=content)
+
+        names = self.cs3_entry_names(os_path)
+        if names is None:
+            ## CS3 cannot list it: a stale view from the mount still beats none,
+            ## and an empty model is the last resort for a directory it has not
+            ## seen either (the window right after a create).
+            if os.path.isdir(os_path):
+                return super()._dir_model(path, content=content)
+            names = []
+
+        model = self._base_model(path)
+        model["type"] = "directory"
+        model["size"] = None
+        if content:
+            model["content"] = contents = []
+            for name in names:
+                if not self.should_list(name):
+                    continue
+                if not self.allow_hidden and is_file_hidden(os.path.join(os_path, name)):
+                    continue
+                try:
+                    contents.append(self.get(path=f"{path}/{name}", content=False))
+                except web.HTTPError:
+                    continue  # vanished between the listing and the stat
+            model["format"] = "json"
+        return model
 
     def _save_directory(self, os_path, model, path=""):
         """create a directory"""
@@ -545,15 +548,27 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         if self.hybrid_exists(new_os_path) and not naive_same_file(old_os_path, new_os_path):
             raise web.HTTPError(409, "File already exists: %s" % new_path)
 
+        is_dir = self.hybrid_isdir(old_os_path)
+
         ## Pre-check so storages that don't enforce locks on rename still refuse.
-        holder = self.foreign_lock_holder(old_os_path)
-        if holder:
-            raise web.HTTPError(423, f"{old_path} is locked by {holder}")
+        ## Containers cannot hold EOS locks, so asking about one is a wasted RPC.
+        if not is_dir:
+            holder = self.foreign_lock_holder(old_os_path)
+            if holder:
+                raise web.HTTPError(423, f"{old_path} is locked by {holder}")
 
         try:
             with self.perm_to_403():
-                ## replaced shutil.move with CS3 rename (carries our lock id)
-                self.move(old_os_path, new_os_path)
+                if is_dir and os.path.isdir(old_os_path):
+                    ## Nothing to arbitrate on a container: one rename syscall
+                    ## on the mount beats a Move RPC carrying a lock id that
+                    ## could never apply. Files keep going through CS3, where
+                    ## the lock id is what permits the move.
+                    shutil.move(old_os_path, new_os_path)
+                    self.invalidate_stat(old_os_path, new_os_path)
+                else:
+                    ## replaced shutil.move with CS3 rename (carries our lock id)
+                    self.move(old_os_path, new_os_path)
         except web.HTTPError:
             raise
         except FileLockedError as e:
@@ -608,3 +623,81 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         if content and model["writable"] and self.foreign_lock_holder(self._get_os_path(path)):
             model["writable"] = False
         return model
+
+    def copy(self, from_path, to_path=None):
+        """Copy a file with a server-side CS3 copy, or a directory via upstream.
+
+        Upstream sends files to ContentsManager.copy, which is get(content=True)
+        followed by save(): the whole file is pulled into a model, JSON-encoded,
+        and written back through the lock funnel - and save() then locks the
+        destination through lock_after_create with nothing to release it, so
+        copies came back read-only until lock_expiration (300s) elapsed.
+
+        copyfile_sync streams it in the storage instead, and leaves no lock: a
+        copy destination is a new file, not an open document. Writes still
+        respect locks - the streamed write carries no lock id, so reva refuses
+        it if something else holds the destination.
+        """
+        path = from_path.strip("/")
+        if self.dir_exists(path):
+            ## directories keep upstream's tree copy
+            return super().copy(from_path, to_path)
+
+        if to_path is not None:
+            to_path = to_path.strip("/")
+
+        from_dir, from_name = path.rsplit("/", 1) if "/" in path else ("", path)
+
+        ## naming below is upstream's ContentsManager.copy, verbatim
+        is_destination_specified = to_path is not None
+        if not is_destination_specified:
+            to_path = from_dir
+        if self.dir_exists(to_path):
+            name = copy_pat.sub(".", from_name)
+            to_name = self.increment_filename(name, to_path, insert="-Copy")
+            to_path = f"{to_path}/{to_name}"
+        elif is_destination_specified:
+            if "/" in to_path:
+                to_dir, _ = to_path.rsplit("/", 1)
+                if not self.dir_exists(to_dir):
+                    raise web.HTTPError(
+                        404, "No such parent directory: %s to copy file in" % to_dir
+                    )
+        else:
+            raise web.HTTPError(404, "No such directory: %s" % to_path)
+
+        src_os_path = self._get_os_path(path)
+        dest_os_path = self._get_os_path(to_path)
+
+        ## A copy needs no lock of its own: the destination is a new file, and
+        ## reading a locked source is allowed (the model just renders read-only).
+        ## The one exception is an explicit destination that already exists,
+        ## which would clobber it. Costs nothing when the name was incremented -
+        ## increment_filename just cached that same negative stat.
+        if self.hybrid_isfile(dest_os_path):
+            holder = self.foreign_lock_holder(dest_os_path)
+            if holder:
+                raise web.HTTPError(423, f"{to_path} is locked by {holder}")
+
+        try:
+            with self.perm_to_403(dest_os_path):
+                if os.path.exists(src_os_path):
+                    ## folder copies already go through the mount (copytree);
+                    ## a single file has no reason to cost RPCs either
+                    shutil.copyfile(src_os_path, dest_os_path)
+                    self.invalidate_stat(dest_os_path)
+                else:
+                    ## source created through CS3 and not in the mount yet;
+                    ## copyfile_sync notes the change itself
+                    self.copyfile_sync(src_os_path, dest_os_path)
+        except FileLockedError as e:
+            raise web.HTTPError(423, f"{to_path} is locked") from e
+
+        model = self.get(to_path, content=False)
+        self.emit(data={"action": "copy", "path": to_path, "source_path": from_path})
+        return model
+
+    # Upstream shells out to `du -s` against the mount, which is slow on EOS.
+    # One CS3 stat carries the tree size in its opaque metadata instead.
+    def _get_dir_size(self, path: str = ".") -> str:
+        return self.get_dir_size(str(path))  # type:ignore[return-value]

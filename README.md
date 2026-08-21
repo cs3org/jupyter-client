@@ -126,7 +126,6 @@ Files being edited are locked in the storage through the CS3 APIs, so other
 applications (sync clients, web office, ...) cannot write to them concurrently.
 
 - `lock_app_name` (default `jupyter-rtc`): the CS3 lock holder ("app name").
-  EOS enforces write locks by app name, and lowercases it - keep it lowercase.
 - `lock_holder_suffix_client_id` (default `True`): appends `-<client_id>` to the
   holder, making locks per-user (`jupyter-rtc-rwelande`). Set it to `False` on
   all servers to share one holder (`jupyter-rtc`) so multiple users can

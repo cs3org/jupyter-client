@@ -60,9 +60,9 @@ class LockHandler(APIHandler):
             if count == 0:
                 try:
                     await run_sync(cm.unlock, os_path, cm.lock_holder, cm.lock_value)
-                except FileLockedError:
+                except FileLockedError as e:
                     # The lock is no longer ours (expired and taken over) - nothing to release.
-                    raise web.HTTPError(409, f"Lock on {path} is held by another application")
+                    raise web.HTTPError(409, f"Lock on {path} is held by another application") from e
                 except FileNotFoundError:
                     pass
                 self.set_status(200)

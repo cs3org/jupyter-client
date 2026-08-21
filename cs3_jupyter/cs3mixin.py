@@ -71,6 +71,8 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
         self.status_handler = StatusCodeHandler()
         self.cs3_token = ""
         self._lock_refresher = None
+        self._stat_cache: dict[str, tuple[Any, float]] = {}
+        self._pending_paths: dict[str, float] = {}  # changed via CS3, mount may lag
         super().__init__(**kwargs)
         self._read_token_file()
         self._config = self._create_cs3_config()
