@@ -45,11 +45,15 @@ The CS3 Contents Manager consists of several key components:
 
 ### JupyterLab Extension
 
-The bundled labextension (`@cs3org/cs3-jupyter`) provides three plugins:
+The bundled labextension (`@cs3org/cs3-jupyter-client`) provides four plugins:
 
 - **Spaces** - sidebar panel listing CERNBox Spaces (projects) the user has access to
 - **Shares** - sidebar panel showing incoming and outgoing CERNBox shared folders
 - **Storage Quota** - progress bar at the bottom of the file browser showing storage usage
+- **Locking** - notifies the server when documents are opened and closed, so the
+  CS3 lock is held while a document is open and released when the last session
+  closes it. Without the labextension installed, locks are only taken on save
+  and released when they expire (`lock_expiration`).
 
 ## Installation
 
@@ -95,18 +99,47 @@ Add the following to your `jupyter_server_config.py`:
 from cs3_jupyter.cs3largefilemanager import CS3LargeFileManager
 
 c.ServerApp.contents_manager_class = CS3LargeFileManager
-c.CS3FileManagerMixin.host = '<host>'
-c.CS3FileManagerMixin.tus_enabled = False
-c.CS3FileManagerMixin.ssl_enabled = False
-c.CS3FileManagerMixin.token_path = '/path/to/oauth.token'
-c.CS3FileManagerMixin.auth_login_type = 'bearer'
-c.CS3FileManagerMixin.authtokenvalidity = 3600
-c.CS3FileManagerMixin.lock_not_impl = False
-c.CS3FileManagerMixin.lock_as_attr = False
-c.CS3FileManagerMixin.root_path = '/eos/user/r/rwelande'
-c.CS3FileManagerMixin.client_id = 'rwelande'
+c.CS3Mixin.host = '<host>'
+# Keep TUS disabled while locking is enabled: cs3-python-client sends a
+# misspelled X-Lock_Holder header on the TUS branch (cs3client/file.py), so
+# locked writes would be rejected by EOS holder matching.
+c.CS3Mixin.tus_enabled = False
+c.CS3Mixin.ssl_enabled = False
+c.CS3Mixin.token_path = '/path/to/oauth.token'
+c.CS3Mixin.auth_login_type = 'bearer'
+c.CS3Mixin.authtokenvalidity = 3600
+c.CS3Mixin.lock_not_impl = False
+c.CS3Mixin.lock_by_setting_attr = False
+c.CS3Mixin.root_path = '/eos/user/r/rwelande'
+c.CS3Mixin.client_id = 'rwelande'
 c.CS3LargeFileManager.max_copy_folder_size_mb = 500
 ```
+
+Configure the traits on `CS3Mixin`: it is the only class in the MRO of both
+contents managers, so the same section applies to `CS3LargeFileManager` and
+`CS3HybridLargeFileManager`. (`c.CS3FileManagerMixin.*` is silently ignored by
+the hybrid manager, which does not inherit from it.)
+
+### Locking
+
+Files being edited are locked in the storage through the CS3 APIs, so other
+applications (sync clients, web office, ...) cannot write to them concurrently.
+
+- `lock_app_name` (default `jupyter-rtc`): the CS3 lock holder ("app name").
+  EOS enforces write locks by app name, and lowercases it - keep it lowercase.
+- `lock_holder_suffix_client_id` (default `True`): appends `-<client_id>` to the
+  holder, making locks per-user (`jupyter-rtc-rwelande`). Set it to `False` on
+  all servers to share one holder (`jupyter-rtc`) so multiple users can
+  collaborate on the same locked files.
+- `lock_value` (default `jupyter_rtc_lock`): the shared lock id, required by
+  reva to refresh or release a lock.
+- `lock_expiration` (default `300` seconds): locks not refreshed within this
+  window expire in the storage; it is also the session-tracker heartbeat timeout.
+
+The `/lock` API tracks how many sessions have a document open (`POST
+/lock?path=...&session_id=...` on open and as heartbeat, `DELETE` on close) and
+releases the reva lock when the last session leaves. A background task refreshes
+locks for tracked sessions and unlocks documents whose sessions went stale.
 
 ### Authentication
 

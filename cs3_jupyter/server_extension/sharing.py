@@ -1,12 +1,11 @@
 # sharing/handlers.py
+
 from tornado import web
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 from google.protobuf.json_format import MessageToDict
 from ..cs3vfs.statuscodehandler import ErrorToHttpCode
-
 from .utils import cache_get_user_info
-
 
 class _CS3HandlerBase(APIHandler):
 
@@ -399,19 +398,9 @@ class GetSpaceHandler(_CS3HandlerBase):
 
 
 default_handlers = [
-        (url_path_join("share", "share"), SharesHandler),
-
-        (url_path_join("share", "link"), LinkHandler),
-
-        (url_path_join("share", "getSharedByMe"), SharedByMeHandler),
-
-        (url_path_join("share", "getSharedWithMe"), SharedWithMeHandler),
-
-        (url_path_join("share", "getSharedByResource"), SharedByResourceHandler),
-
-        (url_path_join("find", "users"), FindUsersHandler),
-        (url_path_join("find", "groups"), FindGroupsHandler),
-
-        (url_path_join("quota"), GetQuotaHandler),
-        (url_path_join("space", "list"), GetSpaceHandler),
+    (url_path_join("share", "share"), SharesHandler),
+    (url_path_join("share", "link"), LinkHandler),
+    (url_path_join("share", "getSharedByMe"), SharedByMeHandler),
+    (url_path_join("share", "getSharedWithMe"), SharedWithMeHandler),
+    (url_path_join("share", "getSharedByResource"), SharedByResourceHandler),
 ]

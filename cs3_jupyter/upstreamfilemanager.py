@@ -15,6 +15,7 @@ from jupyter_server.services.contents.filemanager import AsyncFileContentsManage
 
 # Note this is an import from our own file - these functions/methods HAVE to overload the upstream equivalents
 from .filemanager import  is_hidden, naive_same_file
+from .cs3vfs.statuscodehandler import FileLockedError
 
 '''
 These are modifications to the upstream Jupyter FileManager to handle large file uploads
@@ -135,7 +136,9 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
         if not self.allow_hidden and is_hidden(os_path, self.root_dir):
             raise web.HTTPError(400, "Cannot create hidden directory %r" % os_path)
         ## replaced os.path.exists (now async)
-        if not await self.exists(os_path):
+        ## os_path is already an OS path: self.exists() takes an API path and
+        ## would re-prefix it with root_dir, so it can never match.
+        if not await run_sync(self.vfs_exists, os_path):
             with self.perm_to_403():
                 # replaced os.mkdir
                 await run_sync(self.mkdir, os_path)
@@ -162,8 +165,17 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
             raise web.HTTPError(400, f"Cannot rename file or directory {old_os_path!r}")
 
         ## replaced os.path.exists (now async) and samefile
-        if await self.exists(new_os_path) and not naive_same_file(old_os_path, new_os_path):
+        ## new_os_path is an OS path - see _save_directory, self.exists() would
+        ## re-prefix it and silently never fire, pushing the clash to the storage.
+        if await run_sync(self.vfs_exists, new_os_path) and not naive_same_file(
+            old_os_path, new_os_path
+        ):
             raise web.HTTPError(409, "File already exists: %s" % new_path)
+
+        ## Pre-check so storages that don't enforce locks on rename still refuse.
+        holder = await run_sync(self.foreign_lock_holder, old_os_path)
+        if holder:
+            raise web.HTTPError(423, f"{old_path} is locked by {holder}")
 
         try:
             with self.perm_to_403():
@@ -171,6 +183,10 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
                 await run_sync(self.move, old_os_path, new_os_path)
         except web.HTTPError:
             raise
+        except FileLockedError as e:
+            raise web.HTTPError(423, f"{old_path} is locked") from e
+        except FileNotFoundError:
+            raise web.HTTPError(404, f"File or directory does not exist: {old_path}") from None
         except Exception as e:
             raise web.HTTPError(500, f"Unknown error renaming file: {old_path} {e}") from e
 

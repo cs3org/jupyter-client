@@ -6,33 +6,223 @@ Utilities for file-based Contents/Checkpoints managers.
 
 from __future__ import annotations
 
+from base64 import b64decode, decodebytes, encodebytes
 import errno
 import os
+import time
 from contextlib import contextmanager
 from typing import Generator, TYPE_CHECKING
 import nbformat
+
+
 
 from tornado.web import HTTPError
 from traitlets.config.configurable import LoggingConfigurable
 from anyio.to_thread import run_sync
 
 from jupyter_server.utils import ApiPath, to_api_path, to_os_path
-from .cs3mixin import CS3BaseMixin, CS3Mixin
+from .cs3mixin import CS3Mixin
+from .cs3vfs.cs3lock import LOCK_NO_FILE
+from .cs3vfs.cs3vfs import MOUNT_LAG_TIMEOUT_SECONDS
 
 
 if TYPE_CHECKING:
     from .cs3vfs.cs3vfs import CS3File
 
-class CS3HybridFileManagerMixin(CS3BaseMixin, LoggingConfigurable):
+
+class CS3HybridFileManagerMixin(CS3Mixin, LoggingConfigurable):
     """
-    Mixin for ContentsAPI classes that interact with the filesystem asynchronously.
+    Mixin routing all content mutations through CS3 (so reva-side locks are
+    meaningful) while keeping the local FUSE mount as a fast path for metadata.
     """
-    # TODO: Add locking via the CS3APIs here
+
     @contextmanager
     def open(self, os_path, *args, **kwargs):
         """wrapper around io.open that turns permission errors into 403"""
-        with self.perm_to_403(os_path), open(os_path, *args, **kwargs) as f:
+        # Only writes need the lock; reads of a foreign-locked file are fine
+        # (the model is marked read-only instead). Our own savers hold the lock
+        # already and write via cs3open directly; this path serves everything
+        # else - chunked appends and any upstream caller - so it must lock.
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if any(c in mode for c in "wax"):
+            self.ensure_write_lock(os_path)
+        with self.perm_to_403(os_path), self.cs3open(os_path, *args, **kwargs) as f:
             yield f
+
+    # We have to overwrite atomic_writing to use our own open method.
+    @contextmanager
+    def atomic_writing(self, path: str, *, text: bool = True, encoding: str = "utf-8", **kwargs) -> Generator['CS3File', None, None]:
+        """Context manager for writing to CS3."""
+        mode = "w" if text else "wb"
+        with self.open(path, mode, encoding=encoding) as f:
+            yield f
+
+    # FUSE is only a fast path: a file just created via CS3 may not have
+    # appeared in the mount yet, so on a local miss fall back to a CS3 stat.
+    # This is what prevents the create-then-stat race for new files.
+    def hybrid_lstat(self, os_path):
+        try:
+            return os.lstat(os_path)
+        except FileNotFoundError:
+            return self.lstat(os_path)
+
+    def hybrid_exists(self, os_path):
+        return os.path.exists(os_path) or self.vfs_exists(os_path)
+
+    ## `or self.is_*` would ask CS3 whenever the mount answered "no" - including
+    ## when the mount has the entry and it simply is not that type. Only a path
+    ## the mount has never heard of needs the round-trip.
+    def hybrid_isfile(self, os_path):
+        if os.path.exists(os_path):
+            return os.path.isfile(os_path)
+        return self.is_file(os_path)
+
+    def hybrid_isdir(self, os_path):
+        if os.path.exists(os_path):
+            return os.path.isdir(os_path)
+        return self.is_dir(os_path)
+
+    def mount_lags_in(self, os_dir: str) -> bool:
+        """Does the mount still disagree about something we changed via CS3?
+
+        eosxd cannot see a reva-side create, rename or delete until its own
+        cache expires, so a listing taken from os.listdir keeps showing the old
+        state - a renamed notebook kept its old name until the cache turned
+        over. Comparing only the paths we touched (rather than whole listings)
+        keeps this from tripping over entries the two sources filter
+        differently, such as EOS version folders.
+
+        Costs nothing when nothing is pending, which is the steady state.
+        """
+        pending = [p for p in self._pending_paths if os.path.dirname(p) == os_dir]
+        if not pending:
+            return False
+
+        now = time.monotonic()
+        stale = False
+        for path in pending:
+            if now - self._pending_paths[path] > MOUNT_LAG_TIMEOUT_SECONDS:
+                del self._pending_paths[path]  # give up; stop paying for it
+            elif os.path.exists(path) == self.vfs_exists(path):
+                del self._pending_paths[path]  # the mount has caught up
+            else:
+                stale = True
+        return stale
+
+    def cs3_entry_names(self, os_dir: str):
+        """Names in a directory according to CS3, or None if it cannot say."""
+        try:
+            return [name for name, _ in self.list_dir(os_dir)]
+        except OSError:
+            return None
+
+    def _save_file(self, os_path, content, format):
+        """Save content of a generic file."""
+        state = self.ensure_write_lock(os_path)
+        if (content == "" or content is None) and state == LOCK_NO_FILE:
+            # New empty file: create it via CS3 (not FUSE) so reva sees it
+            # immediately and it can be locked right away.
+            self.vfs_touch(os_path)
+            self.lock_after_create(os_path)
+            return
+        if format not in {"text", "base64"}:
+            raise HTTPError(
+                400,
+                "Must specify format of file contents as 'text' or 'base64'",
+            )
+        try:
+            if format == "text":
+                bcontent = content.encode("utf8")
+            else:
+                b64_bytes = content.encode("ascii")
+                bcontent = decodebytes(b64_bytes)
+        except Exception as e:
+            raise HTTPError(400, f"Encoding error saving {os_path}: {e}") from e
+
+        ## lock already taken above, so bypass open()'s ensure_write_lock
+        with self.perm_to_403(os_path), self.cs3open(os_path, "wb") as f:
+            f.write(bcontent)
+        if state == LOCK_NO_FILE:
+            self.lock_after_create(os_path)
+
+    def _save_notebook(self, os_path, nb, capture_validation_error=None):
+        """Save a notebook to an os_path."""
+        # New notebooks are ordinary CS3 writes: the write creates the file in
+        # reva, and the hybrid_* stat fallbacks cover the FUSE propagation lag.
+        state = self.ensure_write_lock(os_path)
+        ## lock already taken above, so bypass open()'s ensure_write_lock
+        with self.perm_to_403(os_path), self.cs3open(os_path, "w", encoding="utf-8") as f:
+            nbformat.write(
+                nb,
+                f,
+                version=nbformat.NO_CONVERT,
+                capture_validation_error=capture_validation_error,
+            )
+        if state == LOCK_NO_FILE:
+            self.lock_after_create(os_path)
+
+    # Copied from upstream sync FileManagerMixin._read_file; only the isfile
+    # gate is changed so fresh CS3-created files pass before FUSE catches up
+    # (the body already reads via self.open -> CS3).
+    def _read_file(self, os_path, format, raw=False):
+        """Read a non-notebook file."""
+        ## replaced os.path.isfile
+        if not self.hybrid_isfile(os_path):
+            raise HTTPError(400, "Cannot read non-file %s" % os_path)
+
+        with self.open(os_path, "rb") as f:
+            bcontent = f.read()
+
+        if format == "byte":
+            # Not for http response but internal use
+            return (bcontent, "byte", bcontent) if raw else (bcontent, "byte")
+
+        if format is None or format == "text":
+            # Try to interpret as unicode if format is unknown or if unicode
+            # was explicitly requested.
+            try:
+                return (
+                    (bcontent.decode("utf8"), "text", bcontent)
+                    if raw
+                    else (bcontent.decode("utf8"), "text")
+                )
+            except UnicodeError as e:
+                if format == "text":
+                    raise HTTPError(
+                        400,
+                        "%s is not UTF-8 encoded" % os_path,
+                        reason="bad format",
+                    ) from e
+        return (
+            (encodebytes(bcontent).decode("ascii"), "base64", bcontent)
+            if raw
+            else (encodebytes(bcontent).decode("ascii"), "base64")
+        )
+
+    # Copied from upstream sync LargeFileManager._save_large_file with the
+    # builtin open replaced by self.open, so chunked appends go through CS3
+    # instead of mixing CS3 (chunk 1) with FUSE (chunks 2+).
+    def _save_large_file(self, os_path, content, format):
+        """Save content of a generic file."""
+        if format not in {"text", "base64"}:
+            raise HTTPError(
+                400,
+                "Must specify format of file contents as 'text' or 'base64'",
+            )
+        try:
+            if format == "text":
+                bcontent = content.encode("utf8")
+            else:
+                b64_bytes = content.encode("ascii")
+                bcontent = b64decode(b64_bytes)
+        except Exception as e:
+            raise HTTPError(400, f"Encoding error saving {os_path}: {e}") from e
+
+        with self.perm_to_403(os_path):
+            ## replaced builtin open with self.open (CS3)
+            with self.open(os_path, "ab") as f:
+                f.write(bcontent)
+
 
 
 class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
@@ -43,6 +233,11 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
     @contextmanager
     def open(self, os_path, *args, **kwargs):
         """wrapper around io.open that turns permission errors into 403"""
+        # Only writes need the lock; reads of a foreign-locked file are fine
+        # (the model is marked read-only instead).
+        mode = args[0] if args else kwargs.get("mode", "r")
+        if any(c in mode for c in "wax"):
+            self.ensure_write_lock(os_path)
         with self.perm_to_403(os_path), self.cs3open(os_path, *args, **kwargs) as f:
             yield f
 
@@ -129,19 +324,6 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
         )
         return (nb, answer[2]) if raw else nb
 
-    # We use this instead of atomic writing, let reva handle it
-    @contextmanager
-    def writing(self, path: str, text: bool = True, encoding: str = "utf-8", **kwargs) -> Generator['CS3File', None, None]:
-        """Context manager for writing to CS3."""
-        mode = "w" if text else "wb"
-        with self.open(path, mode, encoding=encoding) as f:
-            yield f
-
-    def _vfs_save_file(self, os_path: str, content, format: str) -> None:
-        """Sync helper to save via CS3VirtualFileSystem._save_file."""
-        # CS3Mixin ultimately inherits CS3VirtualFileSystem where _save_file is implemented.
-        CS3Mixin._save_file(self, os_path, content, format)  # type: ignore[attr-defined]
-
     async def _save_notebook(self, os_path, nb, capture_validation_error=None):
         """Save a notebook to an os_path."""
         nb_text = nbformat.writes(
@@ -149,7 +331,10 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
             version=nbformat.NO_CONVERT,
             capture_validation_error=capture_validation_error,
         )
-        await run_sync(self._vfs_save_file, os_path, nb_text, "text")
+        state = await run_sync(self.ensure_write_lock, os_path)
+        await run_sync(self.vfs_save_file, os_path, nb_text, "text")
+        if state == LOCK_NO_FILE:
+            await run_sync(self.lock_after_create, os_path)
 
     async def _save_file(self, os_path, content, format):
         """Save content of a generic file."""
@@ -158,7 +343,14 @@ class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
                 400,
                 "Must specify format of file contents as 'text' or 'base64'",
             )
-        await run_sync(self._vfs_save_file, os_path, content, format)
+        state = await run_sync(self.ensure_write_lock, os_path)
+        if (content == "" or content is None) and state == LOCK_NO_FILE:
+            # Zero-byte uploads are unreliable; create new empty files with touch.
+            await run_sync(self.vfs_touch, os_path)
+        else:
+            await run_sync(self.vfs_save_file, os_path, content, format)
+        if state == LOCK_NO_FILE:
+            await run_sync(self.lock_after_create, os_path)
 
     # replaced with CS3 functionality
     async def _read_file(  # type: ignore[override]

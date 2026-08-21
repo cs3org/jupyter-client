@@ -38,10 +38,10 @@ class CS3File:
         """Load file content from CS3."""
         try:
             if 'b' in self.mode:
-                result = self.cs3_vfs._read_file(self.path, "byte")
+                result = self.cs3_vfs.read_file(self.path, "byte")
                 self._content = result[0]
             else:
-                result = self.cs3_vfs._read_file(self.path, "text")
+                result = self.cs3_vfs.read_file(self.path, "text")
                 self._content = result[0]
         except Exception:
             if 'r' in self.mode:
@@ -96,8 +96,7 @@ class CS3File:
             else:
                 format = "base64"
                 content = base64.encodebytes(self._content).decode("ascii")
-
-            self.cs3_vfs._save_file(self.path, content, format)
+            self.cs3_vfs.vfs_save_file(self.path, content, format)
             self._modified = False
 
     def close(self) -> None:

@@ -8,11 +8,18 @@ Emails: rasmus.oscar.welander@cern.ch.
 from cs3client.exceptions import AuthenticationException, PermissionDeniedException, NotFoundException, AlreadyExistsException, FileLockedException, UnimplementedException
 
 
+# Subclass of OSError so existing `except OSError` handlers keep working,
+# while lock conflicts stay distinguishable from other storage errors.
+# No errno is set, so perm_to_403 will not swallow it.
+class FileLockedError(OSError):
+    pass
+
+
 class StatusCodeHandler:
     def handle_errors(self, e: Exception) -> None:
 
         if isinstance(e, FileLockedException):
-            raise OSError("Resource temporarily unavailable")
+            raise FileLockedError("Resource is locked")
         if isinstance(e, AlreadyExistsException):
             raise FileExistsError("File already exists")
         if isinstance(e, UnimplementedException):
@@ -25,7 +32,10 @@ class StatusCodeHandler:
             raise PermissionError("Permission denied")
         if isinstance(e, ValueError):
             raise ValueError("Invalid input")
-        raise OSError("Unknown error occurred")
+        # Keep the original text: reva reports several conditions (notably a
+        # missing file during a lock operation) as a generic internal error,
+        # and the message is the only thing that says which.
+        raise OSError(f"Unknown error occurred: {e}") from e
 
 class ErrorToHttpCode:
     def map_exception_to_http_code(self, e: Exception) -> int:

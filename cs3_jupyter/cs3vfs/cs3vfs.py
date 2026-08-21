@@ -11,16 +11,28 @@ Emails: rasmus.oscar.welander@cern.ch.
 import base64
 import os
 import stat
+import time
 
 from .cs3file import CS3File
 from .utils import resource_from_path, retry_on_auth_failure, StatResult
 from cs3client.cs3resource import Resource
+from cs3client.exceptions import NotFoundException
 from contextlib import contextmanager
 from typing import Generator, List, Optional, Tuple, Union
 from tornado import web
 
 
 import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
+
+# How long a Stat result stays usable. Long enough that the several lookups
+# behind one request collapse into one RPC, short enough that a change made
+# elsewhere (sync client, web office) shows up in the next file browser
+# refresh, which is on a ~10s timer.
+STAT_TTL_SECONDS = 2.0
+
+# How long to keep expecting the mount to catch up with a CS3-side change
+# before assuming something else keeps the two apart.
+MOUNT_LAG_TIMEOUT_SECONDS = 300.0
 
 
 class CS3VirtualFileSystem:
@@ -30,6 +42,56 @@ class CS3VirtualFileSystem:
     This class provides implementations for file operations using CS3 storage
     instead of the local file system.
     """
+
+    def _stat_cached(self, path: str):
+        """Stat `path`, reusing a recent result. None means "does not exist".
+
+        Metadata reads dominate the gRPC traffic: building the model for one
+        directory entry asks "does it exist?" and then stats it - the same call
+        twice - and the file browser rebuilds every entry on each refresh.
+
+        Only the not-found answer is cached alongside the positive one; every
+        other failure stays uncached so it remains retryable (an expired token
+        must still be refreshed and the call repeated by retry_on_auth_failure).
+        """
+        cache = self._stat_cache
+        now = time.monotonic()
+        hit = cache.get(path)
+        if hit is not None and now - hit[1] < STAT_TTL_SECONDS:
+            return hit[0]
+
+        try:
+            info = self.client.file.stat(self.auth.get_token(), resource_from_path(path))
+        except NotFoundException:
+            cache[path] = (None, now)
+            return None
+        cache[path] = (info, now)
+        return info
+
+    def invalidate_stat(self, *paths: str) -> None:
+        """Drop cached Stat results, e.g. after a mutation performed on the mount."""
+        for path in paths:
+            self._stat_cache.pop(path, None)
+
+    def note_cs3_change(self, *paths: str) -> None:
+        """Record a CS3-side mutation: drop the cached stats and mark pending.
+
+        The FUSE mount cannot see a reva-side change until its own cache
+        expires, so a listing taken from the mount would keep showing the old
+        state; mount_lags_in consults the pending set to decide when a listing
+        must come from CS3 instead. Every CS3 mutation in this class calls
+        this; mount-side mutations call invalidate_stat, since there is
+        nothing for the mount to catch up on.
+        """
+        self.invalidate_stat(*paths)
+        now = time.monotonic()
+        cutoff = now - MOUNT_LAG_TIMEOUT_SECONDS
+        self._pending_paths = {
+            k: t for k, t in self._pending_paths.items() if t > cutoff
+        }
+        for path in paths:
+            self._pending_paths[path] = now
+
     @contextmanager
     def cs3open(self, path: str, mode: str = 'r', encoding: Optional[str] = None, **kwargs) -> Generator['CS3File', None, None]:
         """Context manager for opening CS3 files."""
@@ -44,12 +106,8 @@ class CS3VirtualFileSystem:
     def vfs_exists(self, path: str) -> bool:
         """Check if path exists."""
         try:
-            resource = resource_from_path(path)
-            result = self.client.file.stat(
-                self.auth.get_token(),
-                resource
-            )
-            return result is not None
+            ## same Stat as is_file/is_dir/lstat/access - served once per path
+            return self._stat_cached(path) is not None
         except Exception:
             return False
 
@@ -57,11 +115,7 @@ class CS3VirtualFileSystem:
     def is_file(self, path: str) -> bool:
         """Check if path is a file."""
         try:
-            resource = resource_from_path(path)
-            result = self.client.file.stat(
-                self.auth.get_token(),
-                resource
-            )
+            result = self._stat_cached(path)
             if result is None:
                 return False
 
@@ -74,11 +128,7 @@ class CS3VirtualFileSystem:
     def is_dir(self, path: str) -> bool:
         """Check if path is a directory."""
         try:
-            resource = resource_from_path(path)
-            result = self.client.file.stat(
-                self.auth.get_token(),
-                resource
-            )
+            result = self._stat_cached(path)
             if result is None:
                 return False
             return result.type == cs3spr.ResourceType.RESOURCE_TYPE_CONTAINER
@@ -125,23 +175,45 @@ class CS3VirtualFileSystem:
             )
         except Exception as e:
             self.status_handler.handle_errors(e)
+        finally:
+            self.note_cs3_change(path)
 
     # Alias for rmdir, because jupyter uses it
     def rmdir(self, path: str) -> None:
-        """Remove directory."""
-        return self.unlink(path)
+        """Remove directory (one call for the whole subtree)."""
+        return self.unlink(path, with_lock=False)
 
     @retry_on_auth_failure
-    def unlink(self, path: str) -> None:
+    def unlink(self, path: str, with_lock: bool = True) -> None:
         """Remove file."""
         try:
             resource = resource_from_path(path)
             self.client.file.remove_file(
                 self.auth.get_token(),
+                resource,
+                ## A container cannot hold an EOS lock, so passing one asks reva
+                ## to validate a lock that can never be there. For files it is
+                ## load-bearing: it is what lets us remove a file we hold.
+                lock_id=self.lock_value if with_lock else None,
+            )
+        except Exception as e:
+            self.status_handler.handle_errors(e)
+        finally:
+            self.note_cs3_change(path)
+
+    @retry_on_auth_failure
+    def vfs_touch(self, path: str) -> None:
+        """Create an empty file with CS3."""
+        try:
+            resource = resource_from_path(path)
+            self.client.file.touch_file(
+                self.auth.get_token(),
                 resource
             )
         except Exception as e:
             self.status_handler.handle_errors(e)
+        finally:
+            self.note_cs3_change(path)
 
     def move(self, src: str, dst: str) -> None:
         """Move file or directory."""
@@ -156,20 +228,21 @@ class CS3VirtualFileSystem:
             self.client.file.rename_file(
                 self.auth.get_token(),
                 src_resource,
-                dst_resource
+                dst_resource,
+                lock_id=self.lock_value
             )
         except Exception as e:
             self.status_handler.handle_errors(e)
+        finally:
+            self.note_cs3_change(src, dst)
 
     @retry_on_auth_failure
     def lstat(self, path: str) -> 'StatResult':
         """Get file stats."""
         try:
-            resource = resource_from_path(path)
-            result = self.client.file.stat(
-                self.auth.get_token(),
-                resource
-            )
+            result = self._stat_cached(path)
+            if result is None:
+                raise NotFoundException("not found")
         except Exception as e:
             self.status_handler.handle_errors(e)
 
@@ -179,12 +252,11 @@ class CS3VirtualFileSystem:
     def access(self, path: str, mode: int) -> bool:
         """Check file access permissions."""
         try:
-            resource = resource_from_path(path)
-            result = self.client.file.stat(
-                self.auth.get_token(),
-                resource
-            )
-            return result is not None
+            if self._stat_cached(path) is None:
+                ## kept raising rather than returning False: callers rely on a
+                ## missing path surfacing as FileNotFoundError, not "no access"
+                raise NotFoundException("not found")
+            return True
         except PermissionError:
             return False
         except Exception as e:
@@ -225,7 +297,7 @@ class CS3VirtualFileSystem:
         return (b64_content, "base64", bcontent) if raw else (b64_content, "base64")
 
     @retry_on_auth_failure
-    def _save_file(self, path: str, content: Union[str, bytes], format: str) -> None:
+    def vfs_save_file(self, path: str, content: Union[str, bytes], format: str) -> None:
         """Save a file with CS3."""
         try:
             if format == "text":
@@ -241,10 +313,15 @@ class CS3VirtualFileSystem:
                 self.auth.get_token(),
                 resource,
                 bcontent,
-                len(bcontent)
+                len(bcontent),
+                self.lock_holder,
+                self.lock_value
             )
         except Exception as e:
             self.status_handler.handle_errors(e)
+        finally:
+            ## size and mtime just changed, and save() stats right after
+            self.note_cs3_change(path)
 
     @retry_on_auth_failure
     def get_dir_size(self, path: str) -> int:
@@ -286,20 +363,23 @@ class CS3VirtualFileSystem:
             self.log.warning(f"Error calculating directory size for {path}: {e}")
             return 0
 
-    @retry_on_auth_failure
     async def copyfile(self, src: str, dst: str) -> None:
+        """Copy file contents using streaming to avoid loading entire file in memory."""
+        self.copyfile_sync(src, dst)
+
+    @retry_on_auth_failure
+    def copyfile_sync(self, src: str, dst: str) -> None:
         """Copy file contents using streaming to avoid loading entire file in memory."""
         src_resource = resource_from_path(src)
         dst_resource = resource_from_path(dst)
 
         try:
             # Get the source file size first
-            stat = self.client.file.stat(
-                self.auth.get_token(),
-                src_resource
-            )
+            info = self._stat_cached(src)
+            if info is None:
+                raise NotFoundException("not found")
 
-            file_size = stat.size
+            file_size = info.size
 
             # Get the content generator
             content_generator = self.client.file.read_file(
@@ -312,6 +392,8 @@ class CS3VirtualFileSystem:
 
         except Exception as e:
             self.status_handler.handle_errors(e)
+        finally:
+            self.note_cs3_change(dst)
 
     def _write_file_streamed(self, resource: Resource, content_generator: Generator[bytes, None, None], size: int) -> None:
         """Write a file using streaming to avoid loading entire content in memory."""
