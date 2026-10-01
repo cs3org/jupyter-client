@@ -6,16 +6,14 @@ from __future__ import annotations
 
 
 import typing as t
-from datetime import datetime
 
 from anyio.to_thread import run_sync
 from tornado import web
-from jupyter_server import _tz as tz
 from jupyter_server.services.contents.filemanager import AsyncFileContentsManager, FileContentsManager
 
-# Note this is an import from our own file - these functions/methods HAVE to overload the upstream equivalents
-from .filemanager import  is_hidden, naive_same_file
-from .cs3vfs.statuscodehandler import FileLockedError
+from .fileio import rename_errors_to_http
+# These path checks HAVE to replace the upstream equivalents, which stat the local disk
+from .paths import is_hidden, naive_same_file
 
 '''
 These are modifications to the upstream Jupyter FileManager to handle large file uploads
@@ -27,59 +25,6 @@ See comments with ## in the class below for lines that have been changed from up
 '''
 class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
     """An async file contents manager."""
-
-    # Inherit from FileContentsManager but we need to replace os functions.
-    def _base_model(self, path):
-        """Build the common base of a contents model"""
-        os_path = self._get_os_path(path)
-        ## replaced os.lstat
-        info = self.lstat(os_path)
-
-        four_o_four = "file or directory does not exist: %r" % path
-
-        ## replaced is_hidden with implementation above class
-        if not self.allow_hidden and is_hidden(os_path, self.root_dir):
-            self.log.info("Refusing to serve hidden file or directory %r, via 404 Error", os_path)
-            raise web.HTTPError(404, four_o_four)
-
-        try:
-            # size of file
-            size = info.st_size
-        except (ValueError, OSError):
-            self.log.warning("Unable to get size.")
-            size = None
-
-        try:
-            last_modified = tz.utcfromtimestamp(info.st_mtime)
-        except (ValueError, OSError):
-            # Files can rarely have an invalid timestamp
-            # https://github.com/jupyter/notebook/issues/2539
-            # https://github.com/jupyter/notebook/issues/2757
-            # Use the Unix epoch as a fallback so we don't crash.
-            self.log.warning("Invalid mtime %s for %s", info.st_mtime, os_path)
-            last_modified = datetime(1970, 1, 1, 0, 0, tzinfo=tz.UTC)
-
-        try:
-            created = tz.utcfromtimestamp(info.st_ctime)
-        except (ValueError, OSError):  # See above
-            self.log.warning("Invalid ctime %s for %s", info.st_ctime, os_path)
-            created = datetime(1970, 1, 1, 0, 0, tzinfo=tz.UTC)
-
-        # Create the base model.
-        model = {}
-        model["name"] = path.rsplit("/", 1)[-1]
-        model["path"] = path
-        model["last_modified"] = last_modified
-        model["created"] = created
-        model["content"] = None
-        model["format"] = None
-        model["mimetype"] = None
-        model["size"] = size
-        model["writable"] = self.is_writable(path)
-        model["hash"] = None
-        model["hash_algorithm"] = None
-
-        return model
 
     async def get(self, path, content=True, type=None, format=None, require_hash=False):
         """Takes a path for an entity and returns its model
@@ -132,7 +77,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
 
     async def _save_directory(self, os_path, model, path=""):
         """create a directory"""
-        ## replaced is_hidden with implementation above class
+        ## replaced is_hidden with the one in paths.py
         if not self.allow_hidden and is_hidden(os_path, self.root_dir):
             raise web.HTTPError(400, "Cannot create hidden directory %r" % os_path)
         ## replaced os.path.exists (now async)
@@ -158,7 +103,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
         new_os_path = self._get_os_path(new_path)
         old_os_path = self._get_os_path(old_path)
 
-        ## replaced is_hidden with implementation above class
+        ## replaced is_hidden with the one in paths.py
         if not self.allow_hidden and (
             is_hidden(old_os_path, self.root_dir) or is_hidden(new_os_path, self.root_dir)
         ):
@@ -173,22 +118,11 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
             raise web.HTTPError(409, "File already exists: %s" % new_path)
 
         ## Pre-check so storages that don't enforce locks on rename still refuse.
-        holder = await run_sync(self.foreign_lock_holder, old_os_path)
-        if holder:
-            raise web.HTTPError(423, f"{old_path} is locked by {holder}")
+        await run_sync(self._raise_if_foreign_locked, old_os_path, old_path)
 
-        try:
-            with self.perm_to_403():
-                ## replaced shutil.move
-                await run_sync(self.move, old_os_path, new_os_path)
-        except web.HTTPError:
-            raise
-        except FileLockedError as e:
-            raise web.HTTPError(423, f"{old_path} is locked") from e
-        except FileNotFoundError:
-            raise web.HTTPError(404, f"File or directory does not exist: {old_path}") from None
-        except Exception as e:
-            raise web.HTTPError(500, f"Unknown error renaming file: {old_path} {e}") from e
+        with rename_errors_to_http(old_path), self.perm_to_403():
+            ## replaced shutil.move
+            await run_sync(self.move, old_os_path, new_os_path)
 
     async def _copy_dir(
         self, from_path: str, to_path_original: str, to_name: str, to_path: str

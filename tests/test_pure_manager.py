@@ -205,3 +205,15 @@ def test_notebook_saved_with_trailing_newline_like_nbformat_write(manager, patch
     saved = patch_cs3.files[f"{ROOT}/nb.ipynb"]
     assert saved.endswith(b"\n")
     assert nbformat.reads(saved.decode(), as_version=4) == nb
+
+
+def test_api_path_to_storage_path_costs_no_rpc(manager, patch_cs3):
+    patch_cs3.calls.clear()
+    assert manager._get_os_path("a/b.txt") == f"{ROOT}/a/b.txt"
+    assert sum(patch_cs3.calls.values()) == 0
+
+
+def test_path_with_a_null_byte_is_404(manager):
+    with pytest.raises(HTTPError) as exc:
+        manager._get_os_path("bad\0name")
+    assert exc.value.status_code == 404

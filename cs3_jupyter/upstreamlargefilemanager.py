@@ -69,11 +69,6 @@ class UpstreamLargeFileManager(UpstreamFileManager):
     async def _save_large_file(self, os_path, content, format):
         """Save content of a generic file."""
         bcontent = decode_model_content(content, format, os_path)
-        with self.perm_to_403(os_path):
-            ## This part is replaced to use cs3mixin open and write; the whole
-            ## read-modify-write append runs off the event loop.
-            await run_sync(self._append_chunk, os_path, bcontent)
-
-    def _append_chunk(self, os_path, bcontent):
-        with self.open(os_path, "ab") as f:
-            f.write(bcontent)
+        ## This part is replaced to use cs3mixin open and write; the whole
+        ## read-modify-write append runs off the event loop.
+        await run_sync(self._append_bytes, os_path, bcontent)
