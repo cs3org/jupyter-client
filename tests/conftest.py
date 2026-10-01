@@ -225,6 +225,30 @@ class FakeAuth:
         return ("x-access-token", "fake-token")
 
 
+class FakeLocks:
+    """The lock service DocumentLocks drives, recording what it was asked."""
+
+    def __init__(self):
+        self.state = "held"
+        self.unlocked = []
+        self.refreshed = []
+        self.unlock_error = None
+
+    def acquire_or_refresh_lock(self, path):
+        return self.state
+
+    def foreign_lock_holder(self, path):
+        return "collabora"
+
+    def refresh_lock(self, path):
+        self.refreshed.append(path)
+
+    def unlock(self, path):
+        if self.unlock_error:
+            raise self.unlock_error
+        self.unlocked.append(path)
+
+
 @pytest.fixture
 def fake_cs3():
     return FakeCS3()

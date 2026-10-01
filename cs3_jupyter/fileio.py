@@ -10,7 +10,7 @@ from base64 import decodebytes, encodebytes
 import errno
 import os
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Generator, TYPE_CHECKING
 import nbformat
 
@@ -107,15 +107,15 @@ class CS3HybridFileManagerMixin(CS3Mixin):
     def open(self, os_path, *args, **kwargs):
         """wrapper around io.open that turns permission errors into 403"""
         # Only writes need the lock; reads of a foreign-locked file are fine
-        # (the model is marked read-only instead). Our own savers hold the lock
-        # already and write via cs3open directly; this path serves everything
-        # else - chunked appends and any upstream caller - so it must lock.
+        # (the model is marked read-only instead). Our own savers write bytes
+        # directly; this path serves everything else - chunked appends and
+        # any upstream caller - so it must lock.
         mode = args[0] if args else kwargs.get("mode", "r")
+        writing = any(c in mode for c in "wax")
         with self.perm_to_403(os_path), locked_to_423(os_path):
-            if any(c in mode for c in "wax"):
-                self.ensure_write_lock(os_path)
-            with self.cs3open(os_path, *args, **kwargs) as f:
-                yield f
+            with self.write_lock(os_path) if writing else nullcontext():
+                with self.cs3open(os_path, *args, **kwargs) as f:
+                    yield f
 
     # We have to overwrite atomic_writing to use our own open method.
     @contextmanager
@@ -187,27 +187,21 @@ class CS3HybridFileManagerMixin(CS3Mixin):
     def _save_file(self, os_path, content, format):
         """Save content of a generic file."""
         bcontent = decode_model_content(content, format, os_path)
-        with self.perm_to_403(os_path), locked_to_423(os_path):
-            state = self.ensure_write_lock(os_path)
+        with self.perm_to_403(os_path), locked_to_423(os_path), self.write_lock(os_path) as state:
             if not bcontent and state == LOCK_NO_FILE:
                 # New empty file: create it via CS3 (not FUSE) so reva sees it
                 # immediately and it can be locked right away.
                 self.vfs_touch(os_path)
             else:
                 self.write_bytes(os_path, bcontent)
-            if state == LOCK_NO_FILE:
-                self.lock_after_create(os_path)
 
     def _save_notebook(self, os_path, nb, capture_validation_error=None):
         """Save a notebook to an os_path."""
         # New notebooks are ordinary CS3 writes: the write creates the file in
         # reva, and the hybrid_* stat fallbacks cover the FUSE propagation lag.
         bcontent = notebook_bytes(nb, capture_validation_error)
-        with self.perm_to_403(os_path), locked_to_423(os_path):
-            state = self.ensure_write_lock(os_path)
+        with self.perm_to_403(os_path), locked_to_423(os_path), self.write_lock(os_path):
             self.write_bytes(os_path, bcontent)
-            if state == LOCK_NO_FILE:
-                self.lock_after_create(os_path)
 
     # Upstream sync FileManagerMixin._read_file, with the isfile gate changed
     # so fresh CS3-created files pass before FUSE catches up, and the bytes
@@ -243,11 +237,11 @@ class CS3FileManagerMixin(CS3Mixin):
         # Only writes need the lock; reads of a foreign-locked file are fine
         # (the model is marked read-only instead).
         mode = args[0] if args else kwargs.get("mode", "r")
+        writing = any(c in mode for c in "wax")
         with self.perm_to_403(os_path), locked_to_423(os_path):
-            if any(c in mode for c in "wax"):
-                self.ensure_write_lock(os_path)
-            with self.cs3open(os_path, *args, **kwargs) as f:
-                yield f
+            with self.write_lock(os_path) if writing else nullcontext():
+                with self.cs3open(os_path, *args, **kwargs) as f:
+                    yield f
 
 
     # Moved from "FileManagerMixin (we only use the Async version)"
@@ -343,15 +337,12 @@ class CS3FileManagerMixin(CS3Mixin):
         await run_sync(self._write_locked, os_path, bcontent)
 
     def _write_locked(self, os_path, bcontent):
-        with self.perm_to_403(os_path), locked_to_423(os_path):
-            state = self.ensure_write_lock(os_path)
+        with self.perm_to_403(os_path), locked_to_423(os_path), self.write_lock(os_path) as state:
             if not bcontent and state == LOCK_NO_FILE:
                 # Zero-byte uploads are unreliable; create new empty files with touch.
                 self.vfs_touch(os_path)
             else:
                 self.write_bytes(os_path, bcontent)
-            if state == LOCK_NO_FILE:
-                self.lock_after_create(os_path)
 
     # replaced with CS3 functionality
     async def _read_file(  # type: ignore[override]

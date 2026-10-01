@@ -139,7 +139,7 @@ def test_shared_holder_migration_makes_servers_coholders(fake):
     fake.put("/f")
     assert a.acquire_or_refresh_lock("/f") == LOCK_HELD
     assert b.acquire_or_refresh_lock("/f") == LOCK_HELD  # refresh, same holder
-    b.unlock("/f", b.lock_holder, b.lock_value)
+    b.unlock("/f")
     assert "/f" not in fake.locks
 
 

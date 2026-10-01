@@ -1,19 +1,16 @@
 from __future__ import annotations
 
-import asyncio
 import jwt
 import os
 from configparser import ConfigParser
 from typing import Any
 
-from anyio.to_thread import run_sync
 from cs3client.auth import Auth
 from cs3client.cs3client import CS3Client
 from traitlets import Bool, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
 
 
-from .cs3vfs.statuscodehandler import FileLockedError
 from .cs3vfs.cs3versions import CS3FileVersions
 from .cs3vfs.cs3vfs import CS3VirtualFileSystem
 from .cs3vfs.cs3sharing import CS3Sharing
@@ -21,7 +18,7 @@ from .cs3vfs.cs3spaces import CS3Spaces
 from .cs3vfs.cs3groups import CS3Groups
 from .cs3vfs.cs3users import CS3Users
 from .cs3vfs.cs3lock import CS3Lock
-from .sessiontracker import SessionTracker
+from .documentlocks import DocumentLocks
 
 class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, CS3Lock, LoggingConfigurable):
     """Owns the shared CS3Client/Auth and persistent service instances."""
@@ -69,7 +66,6 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
 
     def __init__(self, **kwargs: Any):
         self.cs3_token = ""
-        self._lock_refresher = None
         self._stat_cache: dict[str, tuple[Any, float]] = {}
         self._pending_paths: dict[str, float] = {}  # changed via CS3, mount may lag
         super().__init__(**kwargs)
@@ -79,7 +75,8 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
         self.auth = Auth(self.client)
         self.auth.set_client_id(self.client_id)
         self.auth.set_client_secret(self.cs3_token)
-        self.session_tracker = SessionTracker(heartbeat_timeout_seconds=self.lock_expiration)
+        # Locks of documents open in the frontend, driven by the /lock endpoint.
+        self.document_locks = DocumentLocks(self, self.lock_expiration, self.log)
         self.log.debug(f"CS3ClientMixinBase initialized with path: {self.root_path}")
 
     @property
@@ -126,40 +123,6 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
         cs3config.set("cs3client", "lock_by_setting_attr", str(self.lock_by_setting_attr).lower())
         cs3config.set("cs3client", "lock_expiration", str(self.lock_expiration))
         return cs3config
-
-    def ensure_lock_refresher(self) -> None:
-        """Start the background lock refresher if it is not already running."""
-        if self._lock_refresher is None or self._lock_refresher.done():
-            self._lock_refresher = asyncio.ensure_future(self._lock_refresh_loop())
-
-    async def _lock_refresh_loop(self) -> None:
-        """Keep locks of open documents alive and release locks whose sessions all went stale.
-
-        Runs while the session tracker has entries; exits when idle (restarted
-        lazily by the next POST /lock).
-        """
-        interval = max(self.lock_expiration // 3, 10)
-        while True:
-            await asyncio.sleep(interval)
-            async with self._lock_mutex:
-                active, expired = self.session_tracker.sweep()
-                # A storage error must never kill the refresher: it is the only
-                # thing keeping open documents locked and stale ones released.
-                for path in expired:
-                    try:
-                        await run_sync(self.unlock, path, self.lock_holder, self.lock_value)
-                    except FileLockedError:
-                        # Not ours anymore - nothing to release.
-                        pass
-                    except OSError as e:
-                        self.log.warning(f"Could not release lock on {path}: {e}")
-                for path in active:
-                    try:
-                        await run_sync(self.refresh_lock, path, self.lock_holder, self.lock_value, self.lock_value)
-                    except OSError as e:
-                        self.log.warning(f"Lock refresh lost on {path}: {e}")
-            if not active and not expired:
-                return
 
     def _decode_token(self) -> dict:
         _, token = self.auth.get_token()
