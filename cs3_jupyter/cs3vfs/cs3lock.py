@@ -2,7 +2,6 @@ import asyncio
 from typing import Optional, Union
 import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
 from cs3client.exceptions import NotFoundException
-from tornado.web import HTTPError
 from .statuscodehandler import FileLockedError, translate_cs3_error
 from .utils import retry_on_auth_failure, resource_from_path
 
@@ -59,7 +58,7 @@ class CS3Lock:
             raise
 
     def ensure_write_lock(self, os_path: str) -> str:
-        """Acquire/refresh our lock before a write; 423 if a foreign holder has it.
+        """Acquire/refresh our lock before a write; FileLockedError if a foreign holder has it.
 
         The pre-write check is the only protection on storages that do not
         enforce locks on upload (e.g. cephmount, localfs).
@@ -67,7 +66,7 @@ class CS3Lock:
         state = self.acquire_or_refresh_lock(os_path)
         if state == LOCK_FOREIGN:
             holder = self.foreign_lock_holder(os_path) or "another application"
-            raise HTTPError(423, f"{os_path} is locked by {holder}")
+            raise FileLockedError(f"{os_path} is locked by {holder}", holder=holder)
         return state
 
     def lock_after_create(self, os_path: str) -> None:

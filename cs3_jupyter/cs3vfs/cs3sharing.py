@@ -6,7 +6,7 @@ Emails: rasmus.oscar.welander@cern.ch.
 """
 
 from typing import List, Optional
-from tornado import web
+from cs3client.exceptions import NotFoundException
 from .statuscodehandler import translate_cs3_error
 from .utils import resource_from_path, retry_on_auth_failure
 
@@ -26,7 +26,7 @@ class CS3Sharing:
                 resource
             )
             if resource_info is None:
-                raise web.HTTPError(404, "Resource not found: %s" % path)
+                raise NotFoundException(f"Resource not found: {path}")
             share = self.client.share.create_share(
                 self.auth.get_token(),
                 resource_info,
@@ -135,7 +135,7 @@ class CS3Sharing:
                 resource
             )
             if resource_info is None:
-                raise web.HTTPError(404, "Resource not found: %s" % path)
+                raise NotFoundException(f"Resource not found: {path}")
             share = self.client.share.create_public_share(
                 self.auth.get_token(),
                 resource_info,

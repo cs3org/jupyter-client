@@ -1,7 +1,6 @@
 import logging
 
 import pytest
-from tornado.web import HTTPError
 
 from cs3_jupyter.cs3vfs.cs3lock import (
     CS3Lock,
@@ -9,6 +8,8 @@ from cs3_jupyter.cs3vfs.cs3lock import (
     LOCK_HELD,
     LOCK_NO_FILE,
 )
+
+from cs3_jupyter.cs3vfs.statuscodehandler import FileLockedError
 
 from conftest import FakeAuth, FakeCS3
 
@@ -87,11 +88,11 @@ def test_acquire_reraises_real_storage_errors(fake, owner, monkeypatch):
         owner.acquire_or_refresh_lock("/f")
 
 
-def test_ensure_write_lock_raises_423_with_holder(fake, owner):
+def test_ensure_write_lock_raises_with_holder(fake, owner):
     fake.put("/f", lock={"app_name": "collabora", "lock_id": "x"})
-    with pytest.raises(HTTPError) as exc:
+    with pytest.raises(FileLockedError) as exc:
         owner.ensure_write_lock("/f")
-    assert exc.value.status_code == 423
+    assert exc.value.holder == "collabora"
     assert "collabora" in str(exc.value)
 
 

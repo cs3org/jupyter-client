@@ -8,7 +8,6 @@ Authors: Rasmus Welander.
 Emails: rasmus.oscar.welander@cern.ch.
 """
 
-import base64
 import os
 import stat
 import time
@@ -19,8 +18,7 @@ from .utils import resource_from_path, retry_on_auth_failure, StatResult
 from cs3client.cs3resource import Resource
 from cs3client.exceptions import NotFoundException
 from contextlib import contextmanager
-from typing import Generator, List, Optional, Tuple, Union
-from tornado import web
+from typing import Generator, List, Optional, Tuple
 
 
 import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
@@ -260,57 +258,28 @@ class CS3VirtualFileSystem:
             translate_cs3_error(e)
 
     @retry_on_auth_failure
-    def read_file(self, path: str, format: Optional[str] = None, raw: bool = False) -> Union[Tuple[Union[str, bytes], str], Tuple[Union[str, bytes], str, bytes]]:
-        """Read a file with CS3."""
-
+    def read_bytes(self, path: str) -> bytes:
+        """Read a whole file."""
         try:
-            resource = resource_from_path(path)
-            result = self.client.file.read_file(
-                self.auth.get_token(),
-                resource
-            )
+            chunks = self.client.file.read_file(self.auth.get_token(), resource_from_path(path))
         except Exception as e:
             translate_cs3_error(e)
-
-        # Collect all chunks
-        bcontent = b''
-        for chunk in result:
+        content = b""
+        for chunk in chunks:
             if isinstance(chunk, Exception):
                 raise chunk
-            bcontent += chunk
-
-        if format == "byte":
-            return (bcontent, "byte", bcontent) if raw else (bcontent, "byte")
-
-        if format is None or format == "text":
-            try:
-                text_content = bcontent.decode("utf8")
-                return (text_content, "text", bcontent) if raw else (text_content, "text")
-            except UnicodeError as e:
-                if format == "text":
-                    raise web.HTTPError(400, "Cannot decode file, file type may not be supported: %s" % path) from e
-        # Fall back to base64
-        b64_content = base64.encodebytes(bcontent).decode("ascii")
-        return (b64_content, "base64", bcontent) if raw else (b64_content, "base64")
+            content += chunk
+        return content
 
     @retry_on_auth_failure
-    def vfs_save_file(self, path: str, content: Union[str, bytes], format: str) -> None:
-        """Save a file with CS3."""
-        try:
-            if format == "text":
-                bcontent = content.encode("utf8")
-            else:
-                b64_bytes = content.encode("ascii")
-                bcontent = base64.decodebytes(b64_bytes)
-        except Exception as e:
-            return translate_cs3_error(e)
-        resource = resource_from_path(path)
+    def write_bytes(self, path: str, content: bytes) -> None:
+        """Write a whole file, under our lock (a foreign lock rejects it)."""
         try:
             self.client.file.write_file(
                 self.auth.get_token(),
-                resource,
-                bcontent,
-                len(bcontent),
+                resource_from_path(path),
+                content,
+                len(content),
                 self.lock_holder,
                 self.lock_value
             )
