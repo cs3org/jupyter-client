@@ -6,7 +6,7 @@ from anyio.to_thread import run_sync
 from jupyter_server.base.handlers import APIHandler
 from tornado import web
 
-from ..cs3vfs.statuscodehandler import http_status_for
+from ..cs3api.errors import http_status_for
 
 T = TypeVar("T")
 

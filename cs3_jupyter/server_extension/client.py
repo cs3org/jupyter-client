@@ -1,10 +1,10 @@
 from typing import Any
 
-from .cs3mixin import CS3Mixin
-from .cs3vfs.cs3groups import CS3Groups
-from .cs3vfs.cs3sharing import CS3Sharing
-from .cs3vfs.cs3spaces import CS3Spaces
-from .cs3vfs.cs3users import CS3Users
+from ..cs3mixin import CS3Mixin
+from ..cs3api.groups import CS3Groups
+from ..cs3api.sharing import CS3Sharing
+from ..cs3api.spaces import CS3Spaces
+from ..cs3api.users import CS3Users
 
 
 class CS3SharingClient(CS3Mixin):

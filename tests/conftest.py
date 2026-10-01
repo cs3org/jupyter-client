@@ -16,7 +16,7 @@ from cs3client.exceptions import (
     UnknownException,
 )
 
-import cs3_jupyter.cs3vfs.session as session_module
+import cs3_jupyter.cs3api.session as session_module
 
 DIR = object()  # sentinel value marking a directory entry
 

@@ -10,13 +10,13 @@ from cs3client.exceptions import (
     PermissionDeniedException,
 )
 
-from cs3_jupyter.cs3vfs.statuscodehandler import (
+from cs3_jupyter.cs3api.errors import (
     CS3AuthError,
     FileLockedError,
     http_status_for,
     translate_cs3_error,
 )
-from cs3_jupyter.cs3vfs.utils import retry_on_auth_failure
+from cs3_jupyter.cs3api.utils import retry_on_auth_failure
 
 
 def translated(e):

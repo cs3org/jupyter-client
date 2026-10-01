@@ -3,7 +3,7 @@ from tornado import web
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 
-from ..cs3vfs.statuscodehandler import FileLockedError
+from ..cs3api.errors import FileLockedError
 
 
 class LockHandler(APIHandler):

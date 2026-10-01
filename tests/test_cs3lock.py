@@ -3,14 +3,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from cs3_jupyter.cs3vfs.cs3lock import (
+from cs3_jupyter.cs3api.locks import (
     CS3Locks,
     LOCK_FOREIGN,
     LOCK_HELD,
     LOCK_NO_FILE,
 )
 
-from cs3_jupyter.cs3vfs.statuscodehandler import FileLockedError
+from cs3_jupyter.cs3api.errors import FileLockedError
 
 from conftest import FakeAuth, FakeCS3
 

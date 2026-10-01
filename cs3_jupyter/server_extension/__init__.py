@@ -1,5 +1,5 @@
 from jupyter_server.utils import url_path_join
-from ..sharing_client import CS3SharingClient
+from .client import CS3SharingClient
 
 from .sharing import default_handlers as sharing_handlers
 from .lock import default_handlers as lock_handlers

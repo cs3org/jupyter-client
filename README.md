@@ -10,38 +10,25 @@ The CS3 Contents Manager extends Jupyter Server's file management capabilities t
 
 ## Architecture
 
-The CS3 Contents Manager consists of several key components:
+There are two contents managers, both importable from
+`cs3_jupyter.cs3largefilemanager`:
 
-### Core Components
+- **CS3LargeFileManager** (`contents/pure.py`): async; every read, write and
+  stat goes through the CS3 APIs.
+- **CS3HybridLargeFileManager** (`contents/hybrid.py`): sync; every mutation
+  goes through CS3, so it carries and respects locks, while metadata comes
+  from the local FUSE mount when the mount has the entry, and from CS3 when
+  it does not.
 
-1. **CS3FileContentsManager** (`cs3_contents_manager/filemanager.py`)
-   - Implements Jupyter's AsyncContentsManager interface
-   - Handles file and directory operations
-   - Contains methods that are significantly different then its upstream countpart.
+The package is layered:
 
-2. **UpstreamFileContentsManager** (`cs3_contents_manager/upstreamlargefilemanager.py`)
-   - Main contents manager class
-   - Implements Jupyter's AsyncContentsManager interface
-   - Handles file and directory operations
-   - Contains methods where only the OS functionality is replaced and can be pushed upstream.
-
-3. **CS3FileSystem** (`cs3_contents_manager/cs3fs/cs3fs.py`)
-   - CS3 storage abstraction layer
-   - Provides filesystem-like interface over CS3 APIs
-   - Handles low-level CS3 client operations
-
-4. **CS3FileManagerMixin** (`cs3_contents_manager/fileio.py`)
-   - Base mixin providing common file operations
-   - Authentication and configuration management
-   - File I/O utilities
-
-5. **CS3FileCheckpoints** (`cs3_contents_manager/filecheckpoints.py`)
-   - Checkpoint management for notebooks
-   - Backup and restore functionality
-
-6. **UpstreamLargeFileManager** (`cs3_contents_manager/largefilemanager.py`)
-   - Specialized handling for large file uploads
-   - Chunked transfer support
+| Path | Contents |
+| --- | --- |
+| `cs3_jupyter/cs3api/` | Access to the CS3 APIs, with no Jupyter imports. `CS3Session` owns the cs3client connection and the token. The services built on it cover storage (`CS3Storage`, with a short-lived stat cache), locks, versions, sharing, users, groups and spaces. Failures are raised as builtin `OSError`s (`errors.py`). |
+| `cs3_jupyter/cs3mixin.py` | `CS3Mixin`: the configuration traits (`c.CS3Mixin.*`) and the session built from them. |
+| `cs3_jupyter/contents/` | The contents managers. `common.py` holds what both share (`CS3ContentsMixin`): lock-aware writes, read-only models for files someone else has locked, and model encoding. `upstream.py` holds upstream methods where only the os calls were replaced, which could be pushed upstream; `pure.py` and `hybrid.py` hold the ones that differ more. `checkpoints.py` serves reva's file versions as checkpoints. |
+| `cs3_jupyter/documentlocks.py` | `DocumentLocks`: holds the lock of each document open in the frontend, counting sessions and refreshing the locks in the background. |
+| `cs3_jupyter/server_extension/` | The REST endpoints. `/lock` is driven by the contents manager's `DocumentLocks`. Sharing, user and group search, quota and spaces go through the extension's own CS3 client. |
 
 ### JupyterLab Extension
 

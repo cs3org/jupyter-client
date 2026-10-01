@@ -19,9 +19,9 @@ from typing import Generator, List, Optional, Tuple
 import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
 from cs3client.exceptions import NotFoundException
 
-from .cs3file import CS3File
+from .file import CS3File
 from .session import CS3Service, CS3Session
-from .statuscodehandler import translate_cs3_error
+from .errors import translate_cs3_error
 from .utils import resource_from_path, retry_on_auth_failure, StatResult
 
 # How long a Stat result stays usable. Long enough that the several lookups

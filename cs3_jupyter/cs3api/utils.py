@@ -14,7 +14,7 @@ import inspect
 from functools import wraps
 from typing import  Callable, ParamSpec, TypeVar, cast
 
-from .statuscodehandler import CS3AuthError
+from .errors import CS3AuthError
 
 P = ParamSpec("P")
 R = TypeVar("R")

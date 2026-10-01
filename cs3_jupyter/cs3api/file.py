@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Optional, Union, TYPE_CHECKING
 if TYPE_CHECKING:
-    from .cs3vfs import CS3Storage
+    from .storage import CS3Storage
 
 
 class CS3File:

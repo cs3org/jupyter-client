@@ -5,8 +5,8 @@ import logging
 import pytest
 
 from cs3_jupyter.cs3largefilemanager import CS3LargeFileManager
-from cs3_jupyter.cs3vfs.statuscodehandler import FileLockedError
-from cs3_jupyter.sharing_client import CS3SharingClient
+from cs3_jupyter.cs3api.errors import FileLockedError
+from cs3_jupyter.server_extension.client import CS3SharingClient
 
 from conftest import DIR, make_manager
 

@@ -7,7 +7,7 @@ from typing import Any
 from traitlets import Bool, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
 
-from .cs3vfs.session import CS3Session
+from .cs3api.session import CS3Session
 
 
 class CS3Mixin(LoggingConfigurable):

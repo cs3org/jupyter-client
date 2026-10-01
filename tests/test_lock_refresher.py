@@ -6,7 +6,7 @@ import time
 
 import pytest
 
-from cs3_jupyter.cs3vfs.statuscodehandler import FileLockedError
+from cs3_jupyter.cs3api.errors import FileLockedError
 from cs3_jupyter.documentlocks import DocumentLocks
 
 from conftest import FakeLocks
