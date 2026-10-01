@@ -9,7 +9,6 @@ from cs3_jupyter.cs3vfs.cs3lock import (
     LOCK_HELD,
     LOCK_NO_FILE,
 )
-from cs3_jupyter.cs3vfs.statuscodehandler import StatusCodeHandler
 
 from conftest import FakeAuth, FakeCS3
 
@@ -21,7 +20,6 @@ class LockOwner(CS3Lock):
         self.fake = fake
         self.client = type("C", (), {"file": fake})()
         self.auth = FakeAuth()
-        self.status_handler = StatusCodeHandler()
         self.lock_holder = holder
         self.lock_value = "jupyter_rtc_lock"
         self.log = logging.getLogger("test")

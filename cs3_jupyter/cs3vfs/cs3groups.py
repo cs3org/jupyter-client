@@ -7,6 +7,7 @@ Emails: rasmus.oscar.welander@cern.ch.
 
 
 from typing import List
+from .statuscodehandler import translate_cs3_error
 from .utils import retry_on_auth_failure
 
 class CS3Groups:
@@ -36,7 +37,7 @@ class CS3Groups:
             )
             return result if result is not None else []
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def get_group(self, opaque_id: str, idp: str) -> dict:
@@ -51,4 +52,4 @@ class CS3Groups:
             )
             return result if result is not None else {}
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)

@@ -17,7 +17,6 @@ import nbformat
 
 
 from tornado.web import HTTPError
-from traitlets.config.configurable import LoggingConfigurable
 from anyio.to_thread import run_sync
 
 from jupyter_server.utils import ApiPath, to_api_path, to_os_path
@@ -30,7 +29,7 @@ if TYPE_CHECKING:
     from .cs3vfs.cs3vfs import CS3File
 
 
-class CS3HybridFileManagerMixin(CS3Mixin, LoggingConfigurable):
+class CS3HybridFileManagerMixin(CS3Mixin):
     """
     Mixin routing all content mutations through CS3 (so reva-side locks are
     meaningful) while keeping the local FUSE mount as a fast path for metadata.
@@ -225,7 +224,7 @@ class CS3HybridFileManagerMixin(CS3Mixin, LoggingConfigurable):
 
 
 
-class CS3FileManagerMixin(CS3Mixin, LoggingConfigurable):
+class CS3FileManagerMixin(CS3Mixin):
     """
     Mixin for ContentsAPI classes that interact with the filesystem asynchronously.
     """

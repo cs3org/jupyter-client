@@ -1,4 +1,5 @@
 import { ServerConnection } from '@jupyterlab/services';
+import { LOG_PREFIX } from './constants';
 
 interface ISpaceResponse {
   id: {
@@ -43,12 +44,12 @@ export async function fetchSpaces(): Promise<ISpace[] | null> {
   try {
     resp = await ServerConnection.makeRequest(`${settings.baseUrl}cs3/spaces`, {}, settings);
   } catch (err) {
-    console.warn('[cs3org/cs3-jupyter-client] Could not fetch spaces', err);
+    console.warn(`${LOG_PREFIX} Could not fetch spaces`, err);
     return null;
   }
 
   if (!resp.ok) {
-    console.warn('[cs3org/cs3-jupyter-client] Could not fetch spaces', resp.statusText);
+    console.warn(`${LOG_PREFIX} Could not fetch spaces`, resp.statusText);
     return null;
   }
 
@@ -56,7 +57,7 @@ export async function fetchSpaces(): Promise<ISpace[] | null> {
   try {
     data = await resp.json();
   } catch {
-    console.warn('[cs3org/cs3-jupyter-client] Could not fetch spaces', resp.statusText);
+    console.warn(`${LOG_PREFIX} Could not fetch spaces`, resp.statusText);
     return null;
   }
 

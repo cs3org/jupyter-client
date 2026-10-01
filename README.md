@@ -45,7 +45,7 @@ The CS3 Contents Manager consists of several key components:
 
 ### JupyterLab Extension
 
-The bundled labextension (`@cs3org/cs3-jupyter-client`) provides four plugins:
+The bundled labextension (`@cs3org/cs3-jupyter`) provides four plugins:
 
 - **Spaces** - sidebar panel listing CERNBox Spaces (projects) the user has access to
 - **Shares** - sidebar panel showing incoming and outgoing CERNBox shared folders

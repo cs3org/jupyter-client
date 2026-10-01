@@ -1,4 +1,5 @@
 import { ServerConnection } from '@jupyterlab/services';
+import { LOG_PREFIX } from './constants';
 
 interface IQuotaResponse {
   quota: {
@@ -24,12 +25,12 @@ export async function fetchQuota(): Promise<IQuota | null> {
   try {
     resp = await ServerConnection.makeRequest(`${settings.baseUrl}cs3/quota/me`, {}, settings);
   } catch (err) {
-    console.warn('[cs3org/cs3-jupyter-client] Could not fetch quota', err);
+    console.warn(`${LOG_PREFIX} Could not fetch quota`, err);
     return null;
   }
 
   if (!resp.ok) {
-    console.warn('[cs3org/cs3-jupyter-client] Could not fetch quota', resp.statusText);
+    console.warn(`${LOG_PREFIX} Could not fetch quota`, resp.statusText);
     return null;
   }
 

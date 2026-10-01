@@ -1,5 +1,6 @@
 import { ServerConnection } from '@jupyterlab/services';
 import type { ISignal } from '@lumino/signaling';
+import { LOG_PREFIX } from './constants';
 
 /**
  * Structural subset of DocumentRegistry.IDocumentWidget that the tracker
@@ -64,7 +65,7 @@ export class DocumentLockTracker {
         }
       }
     } catch (err) {
-      console.warn('[cs3org/cs3-jupyter-client] Could not read lock expiration, using default', err);
+      console.warn(`${LOG_PREFIX} Could not read lock expiration, using default`, err);
     }
   }
 
@@ -86,17 +87,15 @@ export class DocumentLockTracker {
       try {
         const resp = await lockRequest('POST', p, sessionId);
         if (!resp.ok) {
-          console.warn(`[cs3org/cs3-jupyter-client] Could not lock ${p}: HTTP ${resp.status}`);
+          console.warn(`${LOG_PREFIX} Could not lock ${p}: HTTP ${resp.status}`);
           return;
         }
         const data = (await resp.json()) as ILockResponse;
         if (data.read_only) {
-          console.info(
-            `[cs3org/cs3-jupyter-client] ${p} is locked by ${data.holder ?? 'another application'}, opening read-only`
-          );
+          console.info(`${LOG_PREFIX} ${p} is locked by ${data.holder ?? 'another application'}, opening read-only`);
         }
       } catch (err) {
-        console.warn(`[cs3org/cs3-jupyter-client] Lock request for ${p} failed`, err);
+        console.warn(`${LOG_PREFIX} Lock request for ${p} failed`, err);
       }
     };
 

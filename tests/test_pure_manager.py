@@ -154,3 +154,28 @@ def test_chunked_upload_assembles_file(manager, patch_cs3):
     assert patch_cs3.files[f"{ROOT}/big.txt"] == b"aabbcc"
     # the upload holds our lock from chunk 1 onwards
     assert patch_cs3.locks[f"{ROOT}/big.txt"]["app_name"] == manager.lock_holder
+
+
+def test_checkpoints_share_the_managers_client(patch_cs3, monkeypatch):
+    """Checkpoints used to build a second CS3Client (and Auth, and stat cache)."""
+    import cs3_jupyter.cs3mixin as cs3mixin_module
+    from types import SimpleNamespace
+
+    clients = []
+
+    def client(config, name, log):
+        clients.append(SimpleNamespace(file=patch_cs3))
+        return clients[-1]
+
+    monkeypatch.setattr(cs3mixin_module, "CS3Client", client)
+    patch_cs3.files[ROOT] = DIR
+    patch_cs3.put(f"{ROOT}/f.txt", b"x")
+    manager = make_manager(CS3LargeFileManager, patch_cs3, root_path=ROOT)
+    manager.client.checkpoint = SimpleNamespace(
+        list_file_versions=lambda token, resource: [SimpleNamespace(key="v1", mtime=5)]
+    )
+
+    checkpoints = asyncio.run(manager.list_checkpoints("f.txt"))
+
+    assert checkpoints == [{"id": "v1", "last_modified": "5"}]
+    assert len(clients) == 1

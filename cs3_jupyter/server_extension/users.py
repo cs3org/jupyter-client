@@ -1,11 +1,11 @@
 from tornado import web
-from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 from google.protobuf.json_format import MessageToDict
-from ..cs3vfs.statuscodehandler import ErrorToHttpCode
+from ..cs3vfs.statuscodehandler import http_status_for
+from .base import CS3HandlerBase
 
 
-class FindUsersHandler(APIHandler):
+class FindUsersHandler(CS3HandlerBase):
     """
     Handler for finding users.
     :query search: The query string for TYPE_QUERY filter.
@@ -17,11 +17,10 @@ class FindUsersHandler(APIHandler):
     async def get(self):
         search = self.get_query_argument("search", default="")
         user_type = self.get_query_argument("type", default=None)
-        cm = self.contents_manager
         try:
-            users = cm.find_users(search, user_type=user_type)
+            users = self.cs3.find_users(search, user_type=user_type)
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
@@ -33,7 +32,7 @@ class FindUsersHandler(APIHandler):
         self.write({"search": search, "items": users_list})
 
 
-class FindGroupsHandler(APIHandler):
+class FindGroupsHandler(CS3HandlerBase):
     """
     Handler for finding groups.
     :query search: The query string for TYPE_QUERY filter.
@@ -41,12 +40,11 @@ class FindGroupsHandler(APIHandler):
     @web.authenticated
     async def get(self):
         search = self.get_query_argument("search", default="")
-        cm = self.contents_manager
         try:
             # We don't use GROUP_TYPE_FEDERATED, all groups are regular groups.
-            groups = cm.find_groups(search, "GROUP_TYPE_REGULAR")
+            groups = self.cs3.find_groups(search, "GROUP_TYPE_REGULAR")
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return

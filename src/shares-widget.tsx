@@ -7,6 +7,7 @@ import { fileIcon, folderIcon } from '@jupyterlab/ui-components';
 import { Share, ByMeRegularShare, fetchShares } from './shares';
 import { openEditShareModal } from './share-edit-modal';
 import { CERNBOX_LOGO_SVG, SharedWithMeIcon, SharedByMeIcon, SharedPubliclyIcon } from './icons';
+import { LOG_PREFIX } from './constants';
 
 interface FileTypeRegistry {
   getFileTypesForPath(
@@ -133,7 +134,7 @@ function SharesPanel({
         shell.activateById(fileBrowser.id);
       }
     } catch (err) {
-      console.error(`[cs3org/cs3-jupyter:shares] Failed to open ${share.path}:`, err);
+      console.error(`${LOG_PREFIX} Failed to open ${share.path}:`, err);
     }
   };
 

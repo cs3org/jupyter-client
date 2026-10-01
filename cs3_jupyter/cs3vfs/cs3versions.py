@@ -6,6 +6,7 @@ Authors: Rasmus Welander.
 Emails: rasmus.oscar.welander@cern.ch.
 """
 
+from .statuscodehandler import translate_cs3_error
 from .utils import resource_from_path, retry_on_auth_failure
 from typing import Generator
 
@@ -25,7 +26,7 @@ class CS3FileVersions:
             )
             return result if result is not None else []
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def restore_file_version(self, path: str, key: str) -> None:
@@ -38,4 +39,4 @@ class CS3FileVersions:
                 key
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)

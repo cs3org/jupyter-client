@@ -3,7 +3,7 @@ from typing import Optional, Union
 import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
 from cs3client.exceptions import NotFoundException
 from tornado.web import HTTPError
-from .statuscodehandler import FileLockedError
+from .statuscodehandler import FileLockedError, translate_cs3_error
 from .utils import retry_on_auth_failure, resource_from_path
 
 # Result states of acquire_or_refresh_lock.
@@ -111,7 +111,7 @@ class CS3Lock:
                 lock_id
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def get_lock(self, path: str) -> Union[cs3spr.Lock, dict, None]:
@@ -128,7 +128,7 @@ class CS3Lock:
         except FileNotFoundError:
             return None
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def refresh_lock(self, path: str, app_name: str, lock_id: Union[str, int], existing_lock_id: Union[str, int]) -> None:
@@ -143,7 +143,7 @@ class CS3Lock:
                 existing_lock_id
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def set_lock(self, path: str, app_name: str, lock_id: Union[str, int]) -> None:
@@ -157,4 +157,4 @@ class CS3Lock:
                 lock_id,
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)

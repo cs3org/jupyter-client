@@ -7,6 +7,7 @@ Emails: rasmus.oscar.welander@cern.ch.
 
 from typing import List, Optional
 from tornado import web
+from .statuscodehandler import translate_cs3_error
 from .utils import resource_from_path, retry_on_auth_failure
 
 
@@ -36,7 +37,7 @@ class CS3Sharing:
             )
             return share
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     # This is when we want to list shares for a specific resource, such as
     # who we have shared a specific file with.
@@ -54,7 +55,7 @@ class CS3Sharing:
             )
             return result if result is not None else []
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     # This is when we want to list "shared by me" shares
@@ -68,7 +69,7 @@ class CS3Sharing:
             )
             return result if result is not None else []
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def remove_share(self, share_id: str) -> None:
@@ -79,7 +80,7 @@ class CS3Sharing:
                 opaque_id=share_id
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def update_share(self, share_id: str, role: str = None, display_name: str = None) -> None:
@@ -92,7 +93,7 @@ class CS3Sharing:
                 display_name=display_name,
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
         return share
 
     @retry_on_auth_failure
@@ -104,7 +105,7 @@ class CS3Sharing:
             )
             return result if result is not None else []
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def update_received_share(self, share_id: str, hidden: bool) -> None:
@@ -120,7 +121,7 @@ class CS3Sharing:
                 state
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def create_public_share(self, path: str, role: str, password: str = None, expiration: str = None,
@@ -148,7 +149,7 @@ class CS3Sharing:
             )
             return share
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def list_existing_public_shares_by_creator(self, creator_idp: str, creator_opaque_id: str) -> List[dict]:
@@ -161,7 +162,7 @@ class CS3Sharing:
             )
             return result if result is not None else []
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def list_existing_public_shares_by_resource(self, path: str) -> List[dict]:
@@ -176,7 +177,7 @@ class CS3Sharing:
             )
             return result if result is not None else []
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def update_public_share(self, share_id: str, type: str,role: str = None, password: str = None,
@@ -198,7 +199,7 @@ class CS3Sharing:
             )
         except Exception as e:
             self.log.error("Error updating public share:", e)
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
         return share
 
     @retry_on_auth_failure
@@ -210,4 +211,4 @@ class CS3Sharing:
                 opaque_id=share_id
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
