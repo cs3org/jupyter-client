@@ -3,7 +3,7 @@ from typing import Iterator, Optional, Union
 import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
 from cs3client.exceptions import NotFoundException
 from .session import CS3Service, CS3Session
-from .statuscodehandler import FileLockedError, translate_cs3_error
+from .errors import FileLockedError, translate_cs3_error
 from .utils import retry_on_auth_failure, resource_from_path
 
 # Result states of acquire_or_refresh_lock.

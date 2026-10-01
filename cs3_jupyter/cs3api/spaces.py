@@ -9,7 +9,7 @@ Emails: rasmus.oscar.welander@cern.ch.
 from .utils import resource_from_path
 from typing import List
 from .session import CS3Service
-from .statuscodehandler import translate_cs3_error
+from .errors import translate_cs3_error
 from .utils import retry_on_auth_failure
 
 class CS3Spaces(CS3Service):

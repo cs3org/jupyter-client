@@ -7,7 +7,7 @@ import datetime
 from tornado.web import HTTPError
 from jupyter_server.services.contents.checkpoints import AsyncCheckpoints
 
-from .cs3vfs.statuscodehandler import FileLockedError
+from ..cs3api.errors import FileLockedError
 
 
 class CS3FileCheckpoints(AsyncCheckpoints):

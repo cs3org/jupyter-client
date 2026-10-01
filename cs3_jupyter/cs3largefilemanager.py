@@ -1,15 +1,8 @@
-"""The contents managers to configure as ServerApp.contents_manager_class."""
+"""The contents managers to configure as ServerApp.contents_manager_class.
 
-from jupyter_server.services.contents.largefilemanager import LargeFileManager
+Kept as the import path deployments configure; the managers live in contents/.
+"""
 
-from .filemanager import CS3FileContentsManager, CS3HybridFileManager
-from .upstreamlargefilemanager import UpstreamLargeFileManager
+from .contents import CS3HybridLargeFileManager, CS3LargeFileManager
 
-
-class CS3LargeFileManager(CS3FileContentsManager, UpstreamLargeFileManager):
-    """Pure CS3: every read, write and stat goes through the CS3 APIs."""
-
-
-class CS3HybridLargeFileManager(CS3HybridFileManager, LargeFileManager):
-    """CS3 for all mutations (so they carry and respect locks), the local
-    FUSE mount as a fast path for metadata."""
+__all__ = ["CS3HybridLargeFileManager", "CS3LargeFileManager"]

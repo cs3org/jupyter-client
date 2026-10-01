@@ -1,6 +1,6 @@
 import time
 
-from cs3_jupyter.sessiontracker import SessionTracker
+from cs3_jupyter.documentlocks import SessionTracker
 
 
 def test_user_seen_counts_distinct_sessions():

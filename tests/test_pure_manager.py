@@ -158,7 +158,7 @@ def test_chunked_upload_assembles_file(manager, patch_cs3):
 
 def test_checkpoints_share_the_managers_client(patch_cs3, monkeypatch):
     """Checkpoints used to build a second CS3Client (and Auth, and stat cache)."""
-    import cs3_jupyter.cs3vfs.session as session_module
+    import cs3_jupyter.cs3api.session as session_module
     from types import SimpleNamespace
 
     clients = []

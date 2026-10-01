@@ -1,241 +1,127 @@
-"""The CS3 contents managers: methods that differ significantly from upstream."""
+"""The hybrid contents manager: CS3 for all mutations, FUSE as a metadata fast path."""
 
 # Copyright (c) Jupyter Development Team.
 # Distributed under the terms of the Modified BSD License.
 from __future__ import annotations
 
-import errno
 import os
 import shutil
-import stat
 
 import nbformat
-from anyio.to_thread import run_sync
-from jupyter_server import _tz as tz
+from jupyter_server.services.contents.largefilemanager import LargeFileManager
 from jupyter_server.services.contents.manager import copy_pat
 from tornado import web
 from tornado.web import HTTPError
-from traitlets import default, validate
 
-from .fileio import CS3FileManagerMixin, CS3HybridFileManagerMixin, locked_to_423, rename_errors_to_http
+from ..cs3api.utils import StatResult
+from .common import (
+    CS3ContentsMixin,
+    decode_model_content,
+    encode_model_content,
+    locked_to_423,
+    notebook_bytes,
+    rename_errors_to_http,
+)
 from .paths import is_file_hidden, is_hidden, naive_same_file
 
 
-'''
-These are the modifications to the upstream Jupyter FileContentsManager that need significant changes
-to work with CS3 filesystem or contain unecessary functionality for our use case - here it is not as simple
-as replacing os calls with self.<method> calls.
-'''
-class CS3FileContentsManager(CS3FileManagerMixin):
-    """An async file contents manager."""
+class CS3HybridFileManagerMixin(CS3ContentsMixin):
+    """
+    Mixin routing all content mutations through CS3 (so reva-side locks are
+    meaningful) while keeping the local FUSE mount as a fast path for metadata.
+    """
 
-    # Upstream uses os.getcwd
-    # Different implementation
-    @default("root_dir")
-    def _default_root_dir(self):
-        return self.root_path
-
-    # We cannot validate before starting if it's a virtual filesystem.
-    @validate("root_dir")
-    def _validate_root_dir(self, proposal):
-        return proposal.value
-
-    # We cannot validate before starting if it's a virtual filesystem.
-    @validate("preferred_dir")
-    def _validate_preferred_dir(self, proposal):
-        return proposal.value
-
-    # Upstream uses os.access; caching is left to the TTL stat cache under
-    # storage.access, which - unlike a per-path dict - expires and is invalidated
-    # by mutations.
-    def is_writable(self, path):
-        """Does the API style path correspond to a writable directory or file?"""
-        path = path.strip("/")
-        os_path = self._get_os_path(path=path)
+    # FUSE is only a fast path: a file just created via CS3 may not have
+    # appeared in the mount yet, so on a local miss fall back to a CS3 stat.
+    # This is what prevents the create-then-stat race for new files.
+    def hybrid_lstat(self, os_path):
         try:
-            return self.storage.access(os_path, os.W_OK)
-        except OSError:
-            self.log.error("Failed to check write permissions on %s", os_path)
-            return False
+            return os.lstat(os_path)
+        except FileNotFoundError:
+            return self.storage.lstat(os_path)
 
-    # See CS3ContentsMixin._mark_read_only_if_foreign_locked.
-    async def _notebook_model(self, path, content=True, require_hash=False):
-        model = await super()._notebook_model(path, content=content, require_hash=require_hash)
-        if content:
-            await run_sync(self._mark_read_only_if_foreign_locked, model, path)
-        return model
+    def hybrid_exists(self, os_path):
+        return os.path.exists(os_path) or self.storage.exists(os_path)
 
-    async def _file_model(self, path, content=True, format=None, require_hash=False):
-        model = await super()._file_model(path, content=content, format=format, require_hash=require_hash)
-        if content:
-            await run_sync(self._mark_read_only_if_foreign_locked, model, path)
-        return model
+    ## `or self.is_*` would ask CS3 whenever the mount answered "no" - including
+    ## when the mount has the entry and it simply is not that type. Only a path
+    ## the mount has never heard of needs the round-trip.
+    def hybrid_isfile(self, os_path):
+        if os.path.exists(os_path):
+            return os.path.isfile(os_path)
+        return self.storage.is_file(os_path)
 
-    # Upstream is significantly more complex due to os functionality
-    # handling trashbin, and the windows/mac specifics.
-    async def delete_file(self, path):
-        """Delete file at path."""
-        path = path.strip("/")
-        os_path = self._get_os_path(path)
+    def hybrid_isdir(self, os_path):
+        if os.path.exists(os_path):
+            return os.path.isdir(os_path)
+        return self.storage.is_dir(os_path)
 
-        if not self.allow_hidden and is_hidden(os_path, self.root_dir):
-            raise web.HTTPError(400, f"Cannot delete file or directory {os_path!r}")
-        if not await self.exists(path):
-            raise web.HTTPError(404, "File or directory does not exist: %s" % os_path)
-        await run_sync(self._delete, os_path, path, self.storage.is_dir(os_path))
+    def mount_lags_in(self, os_dir: str) -> bool:
+        """Does the mount still disagree about something we changed via CS3?
 
-    async def _dir_model(self, path, content=True):
-        """Build a model for a directory
+        eosxd cannot see a reva-side create, rename or delete until its own
+        cache expires, so a listing taken from os.listdir keeps showing the old
+        state - a renamed notebook kept its old name until the cache turned
+        over. Comparing only the paths we touched (rather than whole listings)
+        keeps this from tripping over entries the two sources filter
+        differently, such as EOS version folders.
 
-        if content is requested, will include a listing of the directory
+        Costs nothing when nothing is pending, which is the steady state.
         """
-        os_path = self._get_os_path(path)
-
-        four_o_four = "directory does not exist: %r" % path
-        ## Replaced os.path.isdir
-        if not self.storage.is_dir(os_path):
-            raise web.HTTPError(404, four_o_four)
-        ## replaced is_hidden with implementation above
-        elif not self.allow_hidden and is_hidden(os_path, self.root_dir):
-            self.log.info("Refusing to serve hidden directory %r, via 404 Error", os_path)
-            raise web.HTTPError(404, four_o_four)
-
-        model = self._base_model(path)
-        model["type"] = "directory"
-        model["size"] = None
-        if content:
-            model["content"] = contents = []
-            os_dir = self._get_os_path(path)
-            ## replaced os.listdir
-            dir_contents = await run_sync(self.storage.list_dir, os_dir)
-
-            for dir_name, stat_info in dir_contents:
-                try:
-                    os_path = os.path.join(os_dir, dir_name)
-                except UnicodeDecodeError as e:
-                    # skip over broken symlinks in listing
-                    if e.errno == errno.ENOENT:
-                        self.log.warning("%s doesn't exist", os_path)
-                    elif e.errno != errno.EACCES:  # Don't provide clues about protected files
-                        self.log.warning("Error stat-ing %s: %r", os_path, e)
-                    continue
-
-                if (
-                    not stat.S_ISLNK(stat_info.st_mode)
-                    and not stat.S_ISREG(stat_info.st_mode)
-                    and not stat.S_ISDIR(stat_info.st_mode)
-                ):
-                    self.log.debug("%s not a regular file", os_path)
-                    continue
-
-                try:
-                    if self.should_list(dir_name) and (
-                        ## replaced is_file_hidden with implementation above class
-                        self.allow_hidden or not is_file_hidden(os_path, stat_res=stat_info)
-                    ):
-                        resource_model = {
-                            "name": dir_name,
-                            "path": f"{path}/{dir_name}",
-                            "last_modified": tz.utcfromtimestamp(stat_info.st_mtime),
-                            "created": tz.utcfromtimestamp(stat_info.st_ctime),
-                            "size": stat_info.st_size,
-                            "writable": stat_info.writeable,
-                        }
-
-                        if stat.S_ISDIR(stat_info.st_mode):
-                            resource_model["type"] = "directory"
-                        contents.append(resource_model)
-                except OSError as e:
-                    # ELOOP: recursive symlink, also don't show failure due to permissions
-                    if e.errno not in [errno.ELOOP, errno.EACCES]:
-                        self.log.warning(
-                            "Unknown error checking if file %r is hidden",
-                            os_path,
-                            exc_info=True,
-                        )
-
-            model["format"] = "json"
-
-        return model
-
-    # Upstream uses AsyncContentsManager.copy which makes it is impossible to
-    # to replace the os function in the super class (AsyncContentsManager - manager.py)
-    # this needs to be fixed in upstream...
-    # FIXME: This function is largely copied from upstream (with the AsyncContentsManager's
-    # copy function inside).
-    async def copy(self, from_path, to_path=None):
-        """
-        Copy an existing file or directory and return its new model.
-        If to_path not specified, it will be the parent directory of from_path.
-        If copying a file and to_path is a directory, filename/directoryname will increment `from_path-Copy#.ext`.
-        Considering multi-part extensions, the Copy# part will be placed before the first dot for all the extensions except `ipynb`.
-        For easier manual searching in case of notebooks, the Copy# part will be placed before the last dot.
-        from_path must be a full path to a file or directory.
-        """
-        to_path_original = str(to_path)
-        path = from_path.strip("/")
-        if to_path is not None:
-            to_path = to_path.strip("/")
-
-        if "/" in path:
-            from_dir, from_name = path.rsplit("/", 1)
-        else:
-            from_dir = ""
-            from_name = path
-
-        ## content=False: this model is only consulted for its type - fetching
-        ## the bytes here meant every copy read the whole file for nothing.
-        model = await self.get(path, content=False)
-        # limit the size of folders being copied to prevent a timeout error
-        if model["type"] == "directory":
-            await self.check_folder_size(path)
-        else:
-            # Copied from AsyncContentManager and OS functionality replaced with cs3_fs functionality
-            is_destination_specified = to_path is not None
-            if not is_destination_specified:
-                to_path = from_dir
-            if await self.dir_exists(to_path):
-                name = copy_pat.sub(".", from_name)
-                to_name = await self.increment_filename(name, to_path, insert="-Copy")
-                to_path = f"{to_path}/{to_name}"
-            elif is_destination_specified:
-                if "/" in to_path:
-                    to_dir, to_name = to_path.rsplit("/", 1)
-                    if not await self.dir_exists(to_dir):
-                        raise HTTPError(404, "No such parent directory: %s to copy file in" % to_dir)
+        stale = False
+        for path in self.storage.pending.in_dir(os_dir):
+            if os.path.exists(path) == self.storage.exists(path):
+                self.storage.pending.settle(path)  # the mount has caught up
             else:
-                raise HTTPError(404, "No such directory: %s" % to_path)
+                stale = True
+        return stale
 
-            src_os_path = self._get_os_path(path)
-            dest_os_path = self._get_os_path(to_path)
+    def cs3_entry_names(self, os_dir: str):
+        """Names in a directory according to CS3, or None if it cannot say."""
+        try:
+            return [name for name, _ in self.storage.list_dir(os_dir)]
+        except OSError:
+            return None
 
-            with self.perm_to_403(dest_os_path):
-                await self._copy(src_os_path, dest_os_path)
+    ## FUSE-first stat with a CS3 fallback; a CS3 stat carries the writable
+    ## flag, the mount needs an access check.
+    def _model_stat(self, os_path):
+        return self.hybrid_lstat(os_path)
 
-            model = await self.get(to_path, content=False)
-            self.emit(data={"action": "copy", "path": to_path, "source_path": from_path})
-            return model
+    def _model_writable(self, path, info):
+        if isinstance(info, StatResult):
+            return info.writeable
+        return self.is_writable(path)
 
-        is_destination_specified = to_path is not None
-        to_name = copy_pat.sub(".", from_name)
-        if not is_destination_specified:
-            to_path = from_dir
-        if await self.exists(to_path):
-            name = copy_pat.sub(".", from_name)
-            to_name = await self.increment_filename(name, to_path, insert="-Copy")
-        to_path = f"{to_path}/{to_name}"
+    def _save_file(self, os_path, content, format):
+        """Save content of a generic file."""
+        self._write_locked(os_path, decode_model_content(content, format, os_path))
 
-        return await self._copy_dir(
-            from_path=from_path,
-            to_path_original=to_path_original,
-            to_name=to_name,
-            to_path=to_path,
-        )
+    def _save_notebook(self, os_path, nb, capture_validation_error=None):
+        """Save a notebook to an os_path."""
+        # New notebooks are ordinary CS3 writes: the write creates the file in
+        # reva, and the hybrid_* stat fallbacks cover the FUSE propagation lag.
+        self._write_locked(os_path, notebook_bytes(nb, capture_validation_error))
 
-    # Upstream uses subprocess to call du command to get directory size
-    # and upstream is significantly more complex so no point in pushing this upstream
-    async def _get_dir_size(self, path: str = ".") -> str:
-        return await run_sync(self.storage.get_dir_size, str(path))  # type:ignore[return-value]
+    # Upstream sync FileManagerMixin._read_file, with the isfile gate changed
+    # so fresh CS3-created files pass before FUSE catches up, and the bytes
+    # read via CS3.
+    def _read_file(self, os_path, format, raw=False):
+        """Read a non-notebook file."""
+        ## replaced os.path.isfile
+        if not self.hybrid_isfile(os_path):
+            raise HTTPError(400, "Cannot read non-file %s" % os_path)
+        with self.perm_to_403(os_path):
+            bcontent = self.storage.read_bytes(os_path)
+        return encode_model_content(bcontent, format, os_path, raw)
+
+    # Upstream sync LargeFileManager._save_large_file with the builtin open
+    # replaced by self.open, so chunked appends go through CS3 instead of
+    # mixing CS3 (chunk 1) with FUSE (chunks 2+).
+    def _save_large_file(self, os_path, content, format):
+        """Save content of a generic file."""
+        self._append_bytes(os_path, decode_model_content(content, format, os_path))
+
 
 class CS3HybridFileManager(CS3HybridFileManagerMixin):
     """A sync contents manager: CS3 for all mutations, FUSE as a metadata fast path.
@@ -559,3 +445,8 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
     # One CS3 stat carries the tree size in its opaque metadata instead.
     def _get_dir_size(self, path: str = ".") -> str:
         return self.storage.get_dir_size(str(path))  # type:ignore[return-value]
+
+
+class CS3HybridLargeFileManager(CS3HybridFileManager, LargeFileManager):
+    """CS3 for all mutations (so they carry and respect locks), the local
+    FUSE mount as a fast path for metadata."""
