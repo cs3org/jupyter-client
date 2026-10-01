@@ -6,7 +6,7 @@ import pytest
 from cs3.rpc.v1beta1.code_pb2 import CODE_OK
 from cs3client.exceptions import SecretNotSetException
 
-from cs3_jupyter.cs3vfs.session import FileAuth
+from cs3_jupyter.cs3api.session import FileAuth
 
 
 def dummy_jwt(sub: str):

@@ -1,5 +1,6 @@
 import { ServerConnection } from '@jupyterlab/services';
 import { LOG_PREFIX } from './constants';
+import { toApiPath } from './paths';
 
 interface ISpaceResponse {
   id: {
@@ -69,6 +70,6 @@ export async function fetchSpaces(): Promise<ISpace[] | null> {
       maxBytes: space.quota.quota_max_bytes,
       remainingBytes: space.quota.remaining_bytes
     },
-    path: space.root_info.path.slice('/eos'.length) // TODO: Don't hardcode this prefix
+    path: toApiPath(space.root_info.path)
   }));
 }

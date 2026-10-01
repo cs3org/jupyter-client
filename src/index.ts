@@ -8,6 +8,7 @@ import { openEditShareModal } from './share-edit-modal';
 import { attachQuotaIndicator } from './quota-widget';
 import { DocumentLockTracker } from './locking';
 import { LOG_PREFIX, PACKAGE_NAME } from './constants';
+import { toStoragePath } from './paths';
 
 /**
  * The Shares plugin.
@@ -48,8 +49,7 @@ const sharesPlugin: JupyterFrontEndPlugin<void> = {
         const item = fileBrowser.selectedItems().next();
         if (item.done || !item.value) return;
         const selected = item.value;
-        const rawPath = '/eos/' + selected.path; // TODO: Don't hardcode this prefix
-        openEditShareModal({ name: selected.name, rawPath }, () => widget.refresh());
+        openEditShareModal({ name: selected.name, rawPath: toStoragePath(selected.path) }, () => widget.refresh());
       }
     });
 
