@@ -1,8 +1,7 @@
 from tornado import web
 from jupyter_server.utils import url_path_join
-from google.protobuf.json_format import MessageToDict
-from ..cs3vfs.statuscodehandler import http_status_for
 from .base import CS3HandlerBase
+from .utils import proto_dicts
 
 
 class FindUsersHandler(CS3HandlerBase):
@@ -17,19 +16,8 @@ class FindUsersHandler(CS3HandlerBase):
     async def get(self):
         search = self.get_query_argument("search", default="")
         user_type = self.get_query_argument("type", default=None)
-        try:
-            users = self.cs3.find_users(search, user_type=user_type)
-        except Exception as e:
-            http_code = http_status_for(e)
-            self.set_status(http_code)
-            self.write({"error": str(e)})
-            return
-        users_list = [
-            MessageToDict(s, preserving_proto_field_name=True)
-            for s in users
-        ]
-        self.set_header("Content-Type", "application/json")
-        self.write({"search": search, "items": users_list})
+        users = await self.call(self.cs3.find_users, search, user_type=user_type)
+        self.write({"search": search, "items": proto_dicts(users)})
 
 
 class FindGroupsHandler(CS3HandlerBase):
@@ -40,20 +28,9 @@ class FindGroupsHandler(CS3HandlerBase):
     @web.authenticated
     async def get(self):
         search = self.get_query_argument("search", default="")
-        try:
-            # We don't use GROUP_TYPE_FEDERATED, all groups are regular groups.
-            groups = self.cs3.find_groups(search, "GROUP_TYPE_REGULAR")
-        except Exception as e:
-            http_code = http_status_for(e)
-            self.set_status(http_code)
-            self.write({"error": str(e)})
-            return
-        groups_list = [
-            MessageToDict(s, preserving_proto_field_name=True)
-            for s in groups
-        ]
-        self.set_header("Content-Type", "application/json")
-        self.write({"search": search, "items": groups_list})
+        # We don't use GROUP_TYPE_FEDERATED, all groups are regular groups.
+        groups = await self.call(self.cs3.find_groups, search, "GROUP_TYPE_REGULAR")
+        self.write({"search": search, "items": proto_dicts(groups)})
 
 
 default_handlers = [
