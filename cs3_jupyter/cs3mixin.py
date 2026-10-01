@@ -13,7 +13,7 @@ from traitlets import Bool, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
 
 
-from .cs3vfs.statuscodehandler import StatusCodeHandler, FileLockedError
+from .cs3vfs.statuscodehandler import FileLockedError
 from .cs3vfs.cs3versions import CS3FileVersions
 from .cs3vfs.cs3vfs import CS3VirtualFileSystem
 from .cs3vfs.cs3sharing import CS3Sharing
@@ -68,7 +68,6 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
 
 
     def __init__(self, **kwargs: Any):
-        self.status_handler = StatusCodeHandler()
         self.cs3_token = ""
         self._lock_refresher = None
         self._stat_cache: dict[str, tuple[Any, float]] = {}

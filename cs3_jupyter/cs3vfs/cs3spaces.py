@@ -8,6 +8,7 @@ Emails: rasmus.oscar.welander@cern.ch.
 
 from .utils import resource_from_path
 from typing import List
+from .statuscodehandler import translate_cs3_error
 from .utils import retry_on_auth_failure
 
 class CS3Spaces:
@@ -25,7 +26,7 @@ class CS3Spaces:
                 resource
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
         return result
 
@@ -40,4 +41,4 @@ class CS3Spaces:
             )
             return result if result is not None else []
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)

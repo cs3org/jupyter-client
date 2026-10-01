@@ -41,6 +41,11 @@ class FakeLockCM(AsyncLargeFileManager):
         self.refresher_started = True
 
 
+@pytest.fixture(autouse=True)
+def offline_cs3(patch_cs3):
+    """The extension builds its own CS3 client at load: keep it off the network."""
+
+
 @pytest.fixture
 def jp_server_config():
     return {

@@ -14,6 +14,7 @@ import stat
 import time
 
 from .cs3file import CS3File
+from .statuscodehandler import translate_cs3_error
 from .utils import resource_from_path, retry_on_auth_failure, StatResult
 from cs3client.cs3resource import Resource
 from cs3client.exceptions import NotFoundException
@@ -135,10 +136,6 @@ class CS3VirtualFileSystem:
         except Exception:
             return False
 
-    def is_abs(self, path: str) -> bool:
-        """Check if path is absolute."""
-        return path.startswith(self.root_path)
-
     def abs_path(self, path: str) -> str:
         return path
 
@@ -152,7 +149,7 @@ class CS3VirtualFileSystem:
                 resource
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
         items = []
         for item in result:
             stat_result = StatResult(item)
@@ -174,7 +171,7 @@ class CS3VirtualFileSystem:
                 resource
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
         finally:
             self.note_cs3_change(path)
 
@@ -197,7 +194,7 @@ class CS3VirtualFileSystem:
                 lock_id=self.lock_value if with_lock else None,
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
         finally:
             self.note_cs3_change(path)
 
@@ -211,7 +208,7 @@ class CS3VirtualFileSystem:
                 resource
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
         finally:
             self.note_cs3_change(path)
 
@@ -232,7 +229,7 @@ class CS3VirtualFileSystem:
                 lock_id=self.lock_value
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
         finally:
             self.note_cs3_change(src, dst)
 
@@ -244,7 +241,7 @@ class CS3VirtualFileSystem:
             if result is None:
                 raise NotFoundException("not found")
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
         return StatResult(result)
 
@@ -260,7 +257,7 @@ class CS3VirtualFileSystem:
         except PermissionError:
             return False
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def read_file(self, path: str, format: Optional[str] = None, raw: bool = False) -> Union[Tuple[Union[str, bytes], str], Tuple[Union[str, bytes], str, bytes]]:
@@ -273,7 +270,7 @@ class CS3VirtualFileSystem:
                 resource
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
         # Collect all chunks
         bcontent = b''
@@ -306,7 +303,7 @@ class CS3VirtualFileSystem:
                 b64_bytes = content.encode("ascii")
                 bcontent = base64.decodebytes(b64_bytes)
         except Exception as e:
-            return self.status_handler.handle_errors(e)
+            return translate_cs3_error(e)
         resource = resource_from_path(path)
         try:
             self.client.file.write_file(
@@ -318,7 +315,7 @@ class CS3VirtualFileSystem:
                 self.lock_value
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
         finally:
             ## size and mtime just changed, and save() stats right after
             self.note_cs3_change(path)
@@ -334,7 +331,7 @@ class CS3VirtualFileSystem:
                     resource
                 )
             except Exception as e:
-                self.status_handler.handle_errors(e)
+                translate_cs3_error(e)
 
             # Get stat info which includes tree_size in opaque metadata
             stat_result = StatResult(result)
@@ -391,7 +388,7 @@ class CS3VirtualFileSystem:
             self._write_file_streamed(dst_resource, content_generator, file_size)
 
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
         finally:
             self.note_cs3_change(dst)
 
@@ -405,7 +402,7 @@ class CS3VirtualFileSystem:
                 size
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     async def copy_tree(self, src: str, dst: str) -> None:
@@ -420,25 +417,3 @@ class CS3VirtualFileSystem:
                 await self.copy_tree(src_path, dst_path)
             else:
                 await self.copyfile(src_path, dst_path)
-
-    def rm_tree(self, path: str) -> None:
-        """Remove directory tree."""
-        if self.is_dir(path):
-            self.unlink(path)
-
-    # Jupyter core utils
-    def ensure_dir_exists(self, path: str) -> None:
-        """Ensure directory exists."""
-        if not self.vfs_exists(path):
-            parent = os.path.dirname(path)
-            # Ensure parent directory exists
-            if parent and not self.vfs_exists(parent):
-                self.ensure_dir_exists(parent)
-            self.mkdir(path)
-
-
-# Convenience function to create a global CS3 file system instance
-def create_cs3_filesystem(config, root_path, client_id = None, client_secret = None) -> CS3VirtualFileSystem:
-    """Create a CS3FileSystem instance."""
-    cs3_fs = CS3VirtualFileSystem(config, root_path, client_id=client_id, client_secret=client_secret)
-    return cs3_fs

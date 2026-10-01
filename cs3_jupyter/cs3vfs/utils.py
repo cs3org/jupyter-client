@@ -14,13 +14,16 @@ import inspect
 from functools import wraps
 from typing import  Callable, ParamSpec, TypeVar, cast
 
+from .statuscodehandler import CS3AuthError
+
 P = ParamSpec("P")
 R = TypeVar("R")
 
 def retry_on_auth_failure(func: Callable[P, R]) -> Callable[P, R]:
     """Retry a CS3 call once after refreshing the token/secret.
 
-    Expects `self` to implement `_refresh_auth()`.
+    Only authentication failures are retried: a permission denied would fail
+    the same way with a fresh token. Expects `self` to implement `_refresh_auth()`.
     Supports both sync and async callables.
     """
 
@@ -30,7 +33,7 @@ def retry_on_auth_failure(func: Callable[P, R]) -> Callable[P, R]:
         async def async_wrapped(self, *args: P.args, **kwargs: P.kwargs) -> R:  # type: ignore[misc]
             try:
                 return await func(self, *args, **kwargs)
-            except PermissionError as e:
+            except CS3AuthError as e:
                 self.log.error(
                     f"cs3mixin: {func.__name__.upper()} AUTH ERROR - {e}, reading token and retrying..."
                 )
@@ -43,7 +46,7 @@ def retry_on_auth_failure(func: Callable[P, R]) -> Callable[P, R]:
     def wrapped(self, *args: P.args, **kwargs: P.kwargs) -> R:  # type: ignore[misc]
         try:
             return func(self, *args, **kwargs)
-        except PermissionError as e:
+        except CS3AuthError as e:
             self.log.error(
                 f"cs3mixin: {func.__name__.upper()} AUTH ERROR - {e}, reading token and retrying..."
             )

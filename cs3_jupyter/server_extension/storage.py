@@ -1,22 +1,21 @@
 from tornado import web
-from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 from google.protobuf.json_format import MessageToDict
-from ..cs3vfs.statuscodehandler import ErrorToHttpCode
+from ..cs3vfs.statuscodehandler import http_status_for
+from .base import CS3HandlerBase
 
 
-class GetQuotaHandler(APIHandler):
+class GetQuotaHandler(CS3HandlerBase):
     """
     Handler for retrieving quota information for the user.
     """
     @web.authenticated
     async def get(self):
-        cm = self.contents_manager
         path = self.get_query_argument("path", default="")
         try:
-            quota = cm.get_quota(path)
+            quota = self.cs3.get_quota(path)
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
@@ -25,17 +24,16 @@ class GetQuotaHandler(APIHandler):
         self.write({"quota": quota_dict})
 
 
-class GetSpaceHandler(APIHandler):
+class GetSpaceHandler(CS3HandlerBase):
     """
     Handler for retrieving space information for the user.
     """
     @web.authenticated
     async def get(self):
-        cm = self.contents_manager
         try:
-            spaces = cm.list_spaces()
+            spaces = self.cs3.list_spaces()
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return

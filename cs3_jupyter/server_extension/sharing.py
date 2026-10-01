@@ -1,20 +1,11 @@
-# sharing/handlers.py
-
 from tornado import web
-from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 from google.protobuf.json_format import MessageToDict
-from ..cs3vfs.statuscodehandler import ErrorToHttpCode
+from ..cs3vfs.statuscodehandler import http_status_for
+from .base import CS3HandlerBase
 from .utils import cache_get_user_info
 
-class _CS3HandlerBase(APIHandler):
-
-    @property
-    def cs3(self):
-        return self.settings["cs3_sharing_client"]
-
-
-class SharesHandler(_CS3HandlerBase):
+class SharesHandler(CS3HandlerBase):
 
     @web.authenticated
     async def post(self):
@@ -39,7 +30,7 @@ class SharesHandler(_CS3HandlerBase):
         try:
             share = self.cs3.create_share(path, opaque_id, idp, role, grantee_type)
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
@@ -67,7 +58,7 @@ class SharesHandler(_CS3HandlerBase):
         try:
             share = self.cs3.update_share(share_id, role=role, display_name=display_name)
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
@@ -87,14 +78,14 @@ class SharesHandler(_CS3HandlerBase):
         try:
             self.cs3.remove_share(share_id)
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
 
         self.set_status(204)
 
-class LinkHandler(_CS3HandlerBase):
+class LinkHandler(CS3HandlerBase):
 
     @web.authenticated
     async def post(self):
@@ -134,7 +125,7 @@ class LinkHandler(_CS3HandlerBase):
                 notify_uploads_extra_recipients=notify_uploads_extra_recipients
             )
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
@@ -187,7 +178,7 @@ class LinkHandler(_CS3HandlerBase):
                 notify_uploads_extra_recipients=notify_uploads_extra_recipients
             )
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
@@ -208,20 +199,20 @@ class LinkHandler(_CS3HandlerBase):
         try:
             self.cs3.remove_public_share(share_id)
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
 
         self.set_status(204)
 
-class SharedWithMeHandler(_CS3HandlerBase):
+class SharedWithMeHandler(CS3HandlerBase):
     @web.authenticated
     async def get(self):
         try:
             shares, _ = self.cs3.list_received_existing_shares()
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
@@ -241,7 +232,7 @@ class SharedWithMeHandler(_CS3HandlerBase):
         self.write({"shares": shares_list})
 
 
-class SharedByMeHandler(_CS3HandlerBase):
+class SharedByMeHandler(CS3HandlerBase):
     """
     Handler for retrieving shares created by the user, both regular and public shares.
     """
@@ -251,7 +242,7 @@ class SharedByMeHandler(_CS3HandlerBase):
             shares, _ = self.cs3.list_existing_shares_by_creator(self.cs3.user_idp, self.cs3.user_opaque_id)
             public_shares, _ = self.cs3.list_existing_public_shares_by_creator(self.cs3.user_idp, self.cs3.user_opaque_id)
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
@@ -274,7 +265,7 @@ class SharedByMeHandler(_CS3HandlerBase):
         self.write({"shares": shares_list, "public_shares": public_shares_list})
 
 
-class SharedByResourceHandler(_CS3HandlerBase):
+class SharedByResourceHandler(CS3HandlerBase):
     """
     Handler for retrieving regular and public shares created by the user for a specific resource.
     query param path: path to the resource (REQUIRED).
@@ -286,7 +277,7 @@ class SharedByResourceHandler(_CS3HandlerBase):
             shares, _ = self.cs3.list_existing_shares_by_resource(path)
             public_shares, _ = self.cs3.list_existing_public_shares_by_resource(path)
         except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
+            http_code = http_status_for(e)
             self.set_status(http_code)
             self.write({"error": str(e)})
             return
@@ -308,94 +299,6 @@ class SharedByResourceHandler(_CS3HandlerBase):
         ]
         self.set_header("Content-Type", "application/json")
         self.write({"shares": shares_list, "public_shares": public_shares_list})
-
-class FindUsersHandler(_CS3HandlerBase):
-    """
-    Handler for finding users.
-    :query search: The query string for TYPE_QUERY filter.
-    :field user_type: The user type for TYPE_USER_TYPE filter. Supported types: USER_TYPE_PRIMARY,
-        USER_TYPE_SECONDARY, USER_TYPE_SERVICE, USER_TYPE_GUEST, USER_TYPE_FEDERATED, USER_TYPE_LIGHTWEIGHT,
-        USER_TYPE_SPACE_OWNER.
-    """
-    @web.authenticated
-    async def get(self):
-        search = self.get_query_argument("search", default="")
-        user_type = self.get_query_argument("type", default=None)
-        try:
-            users = self.cs3.find_users(search, user_type=user_type)
-        except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
-            self.set_status(http_code)
-            self.write({"error": str(e)})
-            return
-        users_list = [
-            MessageToDict(s, preserving_proto_field_name=True)
-            for s in users
-        ]
-        self.set_header("Content-Type", "application/json")
-        self.write({"search": search, "items": users_list})
-
-class FindGroupsHandler(_CS3HandlerBase):
-    """
-    Handler for finding groups.
-    :query search: The query string for TYPE_QUERY filter.
-    """
-    @web.authenticated
-    async def get(self):
-        search = self.get_query_argument("search", default="")
-        try:
-            # We don't use GROUP_TYPE_FEDERATED, all groups are regular groups.
-            groups = self.cs3.find_groups(search, "GROUP_TYPE_REGULAR")
-        except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
-            self.set_status(http_code)
-            self.write({"error": str(e)})
-            return
-        groups_list = [
-            MessageToDict(s, preserving_proto_field_name=True)
-            for s in groups
-        ]
-        self.set_header("Content-Type", "application/json")
-        self.write({"search": search, "items": groups_list})
-
-class GetQuotaHandler(_CS3HandlerBase):
-    """
-    Handler for retrieving quota information for the user.
-    """
-    @web.authenticated
-    async def get(self):
-        path = self.get_query_argument("path", default="")
-        try:
-            quota = self.cs3.get_quota(path)
-        except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
-            self.set_status(http_code)
-            self.write({"error": str(e)})
-            return
-        quota_dict = MessageToDict(quota, preserving_proto_field_name=True)
-        self.set_header("Content-Type", "application/json")
-        self.write({"quota": quota_dict})
-
-class GetSpaceHandler(_CS3HandlerBase):
-    """
-    Handler for retrieving space information for the user.
-    """
-    @web.authenticated
-    async def get(self):
-        try:
-            spaces = self.cs3.list_spaces()
-        except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
-            self.set_status(http_code)
-            self.write({"error": str(e)})
-            return
-        spaces_list = [
-            MessageToDict(s, preserving_proto_field_name=True)
-            for s in spaces
-        ]
-        self.set_header("Content-Type", "application/json")
-        self.write({"spaces": spaces_list})
-
 
 default_handlers = [
     (url_path_join("share", "share"), SharesHandler),

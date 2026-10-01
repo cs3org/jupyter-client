@@ -2,6 +2,7 @@ import { Widget } from '@lumino/widgets';
 import { FileBrowser } from '@jupyterlab/filebrowser';
 import { JupyterFrontEnd } from '@jupyterlab/application';
 import { ISpace, fetchSpaces } from './spaces';
+import { LOG_PREFIX } from './constants';
 
 /**
  * CSS class names used by the widget.
@@ -154,7 +155,7 @@ export class SpacesWidget extends Widget {
       // Switch to the file browser tab in the sidebar
       this._shell.activateById(this._fileBrowser.id);
     } catch (err) {
-      console.error(`[cs3org/cs3-jupyter:spaces] Failed to navigate to ${space.path}:`, err);
+      console.error(`${LOG_PREFIX} Failed to navigate to ${space.path}:`, err);
     }
   }
 

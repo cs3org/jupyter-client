@@ -1,24 +1,23 @@
 """
-File-based Checkpoints implementations.
+Checkpoints backed by reva's file versions.
 """
 
-from tornado.web import HTTPError
-from traitlets import Unicode
 import datetime
-from jupyter_server.services.contents.checkpoints import (
-    AsyncCheckpoints,
-)
-from .fileio import CS3FileManagerMixin
+
+from tornado.web import HTTPError
+from jupyter_server.services.contents.checkpoints import AsyncCheckpoints
+
 from .cs3vfs.statuscodehandler import FileLockedError
 
 
+class CS3FileCheckpoints(AsyncCheckpoints):
+    """Reva versions every write, so checkpoints are just those versions.
 
-class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
-
-    root_dir = Unicode(config=True)
-
-    def _root_dir_default(self):
-        return self.get_user_path()
+    Creating, renaming and deleting checkpoints have nothing to do. Listing
+    and restoring go through the contents manager - the one passed in, or
+    self.parent for the methods that do not get it - so they share its CS3
+    client and stat cache instead of opening a second connection.
+    """
 
     # If available, the CS3 backend/Reva creates checkpoints automatically,
     # meaning we don't need to create checkpoints and this has no real
@@ -27,22 +26,10 @@ class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
         """Create a checkpoint."""
         os_path = contents_mgr._get_os_path(path)
         versions = contents_mgr.list_file_versions(os_path)
-        # The versions have the following keys:
-        # 'Key', 'Size', 'Mtime', 'Etag'
-        # and we need to find the latest version based on Mtime
         if versions:
-            latest_version = max(versions, key=lambda v: v.mtime)
-            checkpoint_id = latest_version.key
-            last_modified = str(latest_version.mtime)
-            return {
-                "id": checkpoint_id,
-                "last_modified": last_modified,
-            }
+            return self._checkpoint_model(max(versions, key=lambda v: v.mtime))
         # Return a mock checkpoint if no versions exist, otherwise jupyter won't open the file.
-        else:
-            return self._get_mock_checkpoint(path, contents_mgr)
-
-
+        return self._get_mock_checkpoint(path, contents_mgr)
 
     # Restore reva checkpoint
     async def restore_checkpoint(self, contents_mgr, checkpoint_id, path):
@@ -58,11 +45,6 @@ class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
             raise HTTPError(423, f"{path} is locked") from e
         return None
 
-    # No need to construct info dict, reva handles versioning.
-    async def checkpoint_model(self, checkpoint_id, os_path):
-        """construct the info dict for a given checkpoint"""
-        return None
-
     # Renaming checkpoints is not needed, reva handles versioning.
     async def rename_checkpoint(self, checkpoint_id, old_path, new_path):
         """Rename a checkpoint from old_path to new_path."""
@@ -74,34 +56,23 @@ class CS3FileCheckpoints(CS3FileManagerMixin,AsyncCheckpoints):
         return None
 
     # Reva handles versioning, so list all versions as checkpoints.
-    # FIXME: we want to decouple this from CS3FileManagerMixin but
-    # that would require an extra parameter "contents_mgr" in the function signature.
     async def list_checkpoints(self, path):
         """list the checkpoints for a given file"""
-        os_path = self._get_os_path(path)
+        contents_mgr = self.parent
+        os_path = contents_mgr._get_os_path(path)
         try:
-            self.lstat(os_path)
+            contents_mgr.lstat(os_path)
         ## We need to return a checkpoint here even if the file doesn't exist
         except OSError:
-            return [self._get_mock_checkpoint(path, self)]
-        versions = self.list_file_versions(os_path)
-        checkpoints = []
-        for version in versions:
-            checkpoint_id = version.key
-            last_modified = str(version.mtime)
-            checkpoints.append({
-                "id": checkpoint_id,
-                "last_modified": last_modified,
-            })
-        if not checkpoints:
-            # Return a mock checkpoint if no versions exist, otherwise jupyter will panic.
-            checkpoints.append(self._get_mock_checkpoint(path, self))
-        return checkpoints
+            return [self._get_mock_checkpoint(path, contents_mgr)]
+        checkpoints = [self._checkpoint_model(v) for v in contents_mgr.list_file_versions(os_path)]
+        # Return a mock checkpoint if no versions exist, otherwise jupyter will panic.
+        return checkpoints or [self._get_mock_checkpoint(path, contents_mgr)]
 
-    # a path for a checkpoint is just the file path in reva
-    def checkpoint_path(self, checkpoint_id, path):
-        """find the path to a checkpoint"""
-        return path
+    @staticmethod
+    def _checkpoint_model(version):
+        # Versions carry 'Key', 'Size', 'Mtime' and 'Etag'.
+        return {"id": version.key, "last_modified": str(version.mtime)}
 
     # Copied from SWAN upstream to create a mock checkpoint when no versions exist
     def _get_mock_checkpoint(self, path, contents_mgr):

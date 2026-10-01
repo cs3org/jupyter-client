@@ -2,7 +2,7 @@
 
 A Jupyter Server Contents Manager implementation that provides seamless integration with CS3 (Cloud Storage Synchronization and Sharing) storage systems. This allows Jupyter environments to directly interact with distributed storage backends that implement the CS3 API, such as CERNBox.
 
-The package also includes a JupyterLab extension that adds CERNBox sidebar panels (Spaces, Shares) and a storage quota indicator to the file browser.
+The package also includes a JupyterLab extension that adds a CERNBox Shares sidebar panel and holds CS3 locks on open documents.
 
 ## Overview
 
@@ -45,15 +45,17 @@ The CS3 Contents Manager consists of several key components:
 
 ### JupyterLab Extension
 
-The bundled labextension (`@cs3org/cs3-jupyter-client`) provides four plugins:
+The bundled labextension (`@cs3org/cs3-jupyter`) provides two plugins:
 
-- **Spaces** - sidebar panel listing CERNBox Spaces (projects) the user has access to
 - **Shares** - sidebar panel showing incoming and outgoing CERNBox shared folders
-- **Storage Quota** - progress bar at the bottom of the file browser showing storage usage
 - **Locking** - notifies the server when documents are opened and closed, so the
   CS3 lock is held while a document is open and released when the last session
   closes it. Without the labextension installed, locks are only taken on save
   and released when they expire (`lock_expiration`).
+
+A Spaces panel and a storage quota indicator are in `src/` but not registered:
+they still show placeholder data instead of calling the `/space/list` and
+`/quota` endpoints.
 
 ## Installation
 

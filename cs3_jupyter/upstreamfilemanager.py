@@ -1,4 +1,4 @@
-"""A contents manager that uses the local file system for storage."""
+"""Upstream FileContentsManager methods with the os calls replaced by CS3 calls."""
 
 # Copyright (c) Jupyter Development Team.
 # Distributed under the terms of the Modified BSD License.
