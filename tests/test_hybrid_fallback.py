@@ -191,6 +191,8 @@ def test_copy_streams_server_side_without_locking(manager, patch_cs3, fuse_dir):
 def test_chunked_upload_appends_via_cs3(manager, patch_cs3, fuse_dir):
     os_path = f"{fuse_dir}/big.txt"
     manager.save({"type": "file", "content": "aa", "format": "text", "chunk": 1}, "big.txt")
+    # chunk 1 created the file through open(): it is ours from here on
+    assert patch_cs3.locks[os_path]["app_name"] == manager.lock_holder
     manager.save({"type": "file", "content": "bb", "format": "text", "chunk": 2}, "big.txt")
     manager.save({"type": "file", "content": "cc", "format": "text", "chunk": -1}, "big.txt")
     assert patch_cs3.files[os_path] == b"aabbcc"
