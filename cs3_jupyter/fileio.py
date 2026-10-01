@@ -11,17 +11,23 @@ import errno
 import os
 import time
 from contextlib import contextmanager, nullcontext
+from datetime import datetime
 from typing import Generator, TYPE_CHECKING
 import nbformat
 
-from tornado.web import HTTPError
 from anyio.to_thread import run_sync
+from jupyter_server import _tz as tz
+from jupyter_server.utils import ApiPath, to_os_path
+from tornado.web import HTTPError
+from traitlets import default
 
-from jupyter_server.utils import ApiPath, to_api_path, to_os_path
 from .cs3mixin import CS3Mixin
 from .cs3vfs.cs3lock import LOCK_NO_FILE
 from .cs3vfs.cs3vfs import MOUNT_LAG_TIMEOUT_SECONDS
 from .cs3vfs.statuscodehandler import FileLockedError
+from .cs3vfs.utils import StatResult
+from .filecheckpoints import CS3FileCheckpoints
+from .paths import is_hidden
 
 
 if TYPE_CHECKING:
@@ -85,7 +91,7 @@ def notebook_bytes(nb, capture_validation_error=None) -> bytes:
 
 
 @contextmanager
-def locked_to_423(os_path: str):
+def locked_to_423(path: str):
     """Context manager turning a lock conflict into a 423.
 
     Upstream save() turns anything that is not an HTTPError into a 500.
@@ -94,14 +100,37 @@ def locked_to_423(os_path: str):
         yield
     except FileLockedError as e:
         # A rejected write does not say who holds the lock; ensure_write_lock does.
-        raise HTTPError(423, str(e) if e.holder else f"{os_path} is locked") from e
+        raise HTTPError(423, str(e) if e.holder else f"{path} is locked") from e
 
 
-class CS3HybridFileManagerMixin(CS3Mixin):
+@contextmanager
+def rename_errors_to_http(old_path: str):
+    """Context manager mapping what a rename can run into to HTTP errors."""
+    try:
+        yield
+    except HTTPError:
+        raise
+    except FileLockedError as e:
+        raise HTTPError(423, f"{old_path} is locked") from e
+    except FileNotFoundError:
+        raise HTTPError(404, f"File or directory does not exist: {old_path}") from None
+    except Exception as e:
+        raise HTTPError(500, f"Unknown error renaming file: {old_path} {e}") from e
+
+
+class CS3ContentsMixin(CS3Mixin):
+    """What both contents managers share.
+
+    Every write goes through CS3 under our lock, and the model of a file
+    someone else has locked is read-only. Like upstream's FileManagerMixin the
+    helpers are sync: the hybrid manager calls them directly, the async pure
+    manager through run_sync.
     """
-    Mixin routing all content mutations through CS3 (so reva-side locks are
-    meaningful) while keeping the local FUSE mount as a fast path for metadata.
-    """
+
+    # Reva versions every write, so checkpoints are its file versions.
+    @default("checkpoints_class")
+    def _checkpoints_class_default(self):
+        return CS3FileCheckpoints
 
     @contextmanager
     def open(self, os_path, *args, **kwargs):
@@ -117,13 +146,130 @@ class CS3HybridFileManagerMixin(CS3Mixin):
                 with self.cs3open(os_path, *args, **kwargs) as f:
                     yield f
 
-    # We have to overwrite atomic_writing to use our own open method.
+    # Upstream's atomic_writing writes a temporary file on local disk.
     @contextmanager
     def atomic_writing(self, path: str, *, text: bool = True, encoding: str = "utf-8", **kwargs) -> Generator['CS3File', None, None]:
         """Context manager for writing to CS3."""
         mode = "w" if text else "wb"
         with self.open(path, mode, encoding=encoding) as f:
             yield f
+
+    def _write_locked(self, os_path, bcontent):
+        """Write a whole file through CS3, under our lock."""
+        with self.perm_to_403(os_path), locked_to_423(os_path), self.write_lock(os_path) as state:
+            if not bcontent and state == LOCK_NO_FILE:
+                # New empty file: zero-byte uploads are unreliable, so touch it
+                # instead - via CS3, not FUSE, so reva sees it immediately and
+                # it can be locked right away.
+                self.vfs_touch(os_path)
+            else:
+                self.write_bytes(os_path, bcontent)
+
+    def _append_bytes(self, os_path, bcontent):
+        """Append a chunk of an upload through CS3, like its first chunk."""
+        with self.open(os_path, "ab") as f:
+            f.write(bcontent)
+
+    def _raise_if_foreign_locked(self, os_path, path):
+        """423 if someone else holds the lock on a file.
+
+        Storages that don't enforce locks on delete or rename would let those
+        through, so they check first.
+        """
+        holder = self.foreign_lock_holder(os_path)
+        if holder:
+            raise HTTPError(423, f"{path} is locked by {holder}")
+
+    # Lock ownership is surfaced in the models so foreign-locked files render
+    # read-only. Lock state comes from CS3 GetLock (exact holder match) rather
+    # than FUSE xattrs, which lag behind and contain the EOS-encoded holder
+    # name. Only checked when content is requested (opening the document), so
+    # directory listings - which build each entry with content=False - don't
+    # pay one GetLock per file.
+    def _mark_read_only_if_foreign_locked(self, model, path):
+        if model["writable"] and self.foreign_lock_holder(self._get_os_path(path)):
+            model["writable"] = False
+        return model
+
+    def _delete(self, os_path, path, is_dir):
+        """Delete through CS3; reva's recycle bin replaces send2trash."""
+        if is_dir:
+            self.log.debug("Removing directory %s", os_path)
+            with self.perm_to_403():
+                self.rmdir(os_path)
+            return
+        ## Pre-check so storages that don't enforce locks on delete still refuse.
+        self._raise_if_foreign_locked(os_path, path)
+        self.log.debug("Unlinking file %s", os_path)
+        with self.perm_to_403(), locked_to_423(path):
+            ## replaced os.unlink with CS3 remove (carries our lock id)
+            self.unlink(os_path)
+
+    # Upstream's, with the stat and the writable flag taken from the hooks below.
+    def _base_model(self, path):
+        """Build the common base of a contents model"""
+        os_path = self._get_os_path(path)
+        info = self._model_stat(os_path)
+
+        four_o_four = "file or directory does not exist: %r" % path
+
+        ## replaced is_hidden with the one in paths.py
+        if not self.allow_hidden and is_hidden(os_path, self.root_dir):
+            self.log.info("Refusing to serve hidden file or directory %r, via 404 Error", os_path)
+            raise HTTPError(404, four_o_four)
+
+        try:
+            # size of file
+            size = info.st_size
+        except (ValueError, OSError):
+            self.log.warning("Unable to get size.")
+            size = None
+
+        try:
+            last_modified = tz.utcfromtimestamp(info.st_mtime)
+        except (ValueError, OSError):
+            # Files can rarely have an invalid timestamp
+            # https://github.com/jupyter/notebook/issues/2539
+            # https://github.com/jupyter/notebook/issues/2757
+            # Use the Unix epoch as a fallback so we don't crash.
+            self.log.warning("Invalid mtime %s for %s", info.st_mtime, os_path)
+            last_modified = datetime(1970, 1, 1, 0, 0, tzinfo=tz.UTC)
+
+        try:
+            created = tz.utcfromtimestamp(info.st_ctime)
+        except (ValueError, OSError):  # See above
+            self.log.warning("Invalid ctime %s for %s", info.st_ctime, os_path)
+            created = datetime(1970, 1, 1, 0, 0, tzinfo=tz.UTC)
+
+        # Create the base model.
+        model = {}
+        model["name"] = path.rsplit("/", 1)[-1]
+        model["path"] = path
+        model["last_modified"] = last_modified
+        model["created"] = created
+        model["content"] = None
+        model["format"] = None
+        model["mimetype"] = None
+        model["size"] = size
+        model["writable"] = self._model_writable(path, info)
+        model["hash"] = None
+        model["hash_algorithm"] = None
+
+        return model
+
+    def _model_stat(self, os_path):
+        ## replaced os.lstat
+        return self.lstat(os_path)
+
+    def _model_writable(self, path, info):
+        return self.is_writable(path)
+
+
+class CS3HybridFileManagerMixin(CS3ContentsMixin):
+    """
+    Mixin routing all content mutations through CS3 (so reva-side locks are
+    meaningful) while keeping the local FUSE mount as a fast path for metadata.
+    """
 
     # FUSE is only a fast path: a file just created via CS3 may not have
     # appeared in the mount yet, so on a local miss fall back to a CS3 stat.
@@ -184,24 +330,25 @@ class CS3HybridFileManagerMixin(CS3Mixin):
         except OSError:
             return None
 
+    ## FUSE-first stat with a CS3 fallback; a CS3 stat carries the writable
+    ## flag, the mount needs an access check.
+    def _model_stat(self, os_path):
+        return self.hybrid_lstat(os_path)
+
+    def _model_writable(self, path, info):
+        if isinstance(info, StatResult):
+            return info.writeable
+        return self.is_writable(path)
+
     def _save_file(self, os_path, content, format):
         """Save content of a generic file."""
-        bcontent = decode_model_content(content, format, os_path)
-        with self.perm_to_403(os_path), locked_to_423(os_path), self.write_lock(os_path) as state:
-            if not bcontent and state == LOCK_NO_FILE:
-                # New empty file: create it via CS3 (not FUSE) so reva sees it
-                # immediately and it can be locked right away.
-                self.vfs_touch(os_path)
-            else:
-                self.write_bytes(os_path, bcontent)
+        self._write_locked(os_path, decode_model_content(content, format, os_path))
 
     def _save_notebook(self, os_path, nb, capture_validation_error=None):
         """Save a notebook to an os_path."""
         # New notebooks are ordinary CS3 writes: the write creates the file in
         # reva, and the hybrid_* stat fallbacks cover the FUSE propagation lag.
-        bcontent = notebook_bytes(nb, capture_validation_error)
-        with self.perm_to_403(os_path), locked_to_423(os_path), self.write_lock(os_path):
-            self.write_bytes(os_path, bcontent)
+        self._write_locked(os_path, notebook_bytes(nb, capture_validation_error))
 
     # Upstream sync FileManagerMixin._read_file, with the isfile gate changed
     # so fresh CS3-created files pass before FUSE catches up, and the bytes
@@ -220,47 +367,13 @@ class CS3HybridFileManagerMixin(CS3Mixin):
     # mixing CS3 (chunk 1) with FUSE (chunks 2+).
     def _save_large_file(self, os_path, content, format):
         """Save content of a generic file."""
-        bcontent = decode_model_content(content, format, os_path)
-        ## replaced builtin open with self.open (CS3)
-        with self.open(os_path, "ab") as f:
-            f.write(bcontent)
+        self._append_bytes(os_path, decode_model_content(content, format, os_path))
 
 
-class CS3FileManagerMixin(CS3Mixin):
+class CS3FileManagerMixin(CS3ContentsMixin):
     """
     Mixin for ContentsAPI classes that interact with the filesystem asynchronously.
     """
-
-    @contextmanager
-    def open(self, os_path, *args, **kwargs):
-        """wrapper around io.open that turns permission errors into 403"""
-        # Only writes need the lock; reads of a foreign-locked file are fine
-        # (the model is marked read-only instead).
-        mode = args[0] if args else kwargs.get("mode", "r")
-        writing = any(c in mode for c in "wax")
-        with self.perm_to_403(os_path), locked_to_423(os_path):
-            with self.write_lock(os_path) if writing else nullcontext():
-                with self.cs3open(os_path, *args, **kwargs) as f:
-                    yield f
-
-
-    # Moved from "FileManagerMixin (we only use the Async version)"
-    @contextmanager
-    def perm_to_403(self, os_path=""):
-        """context manager for turning permission errors into 403."""
-        try:
-            yield
-        except OSError as e:
-            if e.errno in {errno.EPERM, errno.EACCES}:
-                # make 403 error message without root prefix
-                # this may not work perfectly on unicode paths on Python 2,
-                # but nobody should be doing that anyway.
-                if not os_path:
-                    os_path = e.filename or "unknown file"
-                path = to_api_path(os_path, root=self.root_dir)  # type:ignore[attr-defined]
-                raise HTTPError(403, "Permission denied: %s" % path) from e
-            else:
-                raise
 
     # Os functionality replaced with CS3 functionality
     def _get_os_path(self, path):
@@ -285,14 +398,10 @@ class CS3FileManagerMixin(CS3Mixin):
         if os.path.splitdrive(path)[0]:
             raise HTTPError(404, "%s is not a relative API path" % path)
         os_path = to_os_path(ApiPath(path), root)
-        try:
-            self.lstat(os_path)
-        except OSError:
-            # OSError could be FileNotFound, PermissionError, etc.
-            # those should raise (or not) elsewhere
-            pass
-        except ValueError:
-            raise HTTPError(404, f"{path} is not a valid path") from None
+        ## upstream lstats here only for the ValueError of an invalid path
+        ## (an embedded null byte); against CS3 that was a Stat per call.
+        if "\0" in os_path:
+            raise HTTPError(404, f"{path} is not a valid path")
 
         if not (self.abs_path(os_path) + os.path.sep).startswith(root):
             raise HTTPError(404, "%s is outside root contents directory" % path)
@@ -335,14 +444,6 @@ class CS3FileManagerMixin(CS3Mixin):
         """Save content of a generic file."""
         bcontent = decode_model_content(content, format, os_path)
         await run_sync(self._write_locked, os_path, bcontent)
-
-    def _write_locked(self, os_path, bcontent):
-        with self.perm_to_403(os_path), locked_to_423(os_path), self.write_lock(os_path) as state:
-            if not bcontent and state == LOCK_NO_FILE:
-                # Zero-byte uploads are unreliable; create new empty files with touch.
-                self.vfs_touch(os_path)
-            else:
-                self.write_bytes(os_path, bcontent)
 
     # replaced with CS3 functionality
     async def _read_file(  # type: ignore[override]

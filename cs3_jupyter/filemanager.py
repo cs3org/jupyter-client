@@ -1,4 +1,4 @@
-"""A contents manager that uses the local file system for storage."""
+"""The CS3 contents managers: methods that differ significantly from upstream."""
 
 # Copyright (c) Jupyter Development Team.
 # Distributed under the terms of the Modified BSD License.
@@ -8,45 +8,17 @@ import errno
 import os
 import shutil
 import stat
-from datetime import datetime
-from pathlib import Path
 
 import nbformat
 from anyio.to_thread import run_sync
 from jupyter_server import _tz as tz
+from jupyter_server.services.contents.manager import copy_pat
 from tornado import web
 from tornado.web import HTTPError
 from traitlets import default, validate
 
-from .filecheckpoints import CS3FileCheckpoints
-from .fileio import CS3FileManagerMixin, CS3HybridFileManagerMixin
-from .cs3vfs.statuscodehandler import FileLockedError
-from .cs3vfs.utils import StatResult
-from jupyter_server.services.contents.manager import copy_pat
-
-'''
-These are functions that have been reimplemented from jupyter.core.paths and os.path
-'''
-
-# replaces "import jupyter.core.paths is_file_hidden"
-def is_file_hidden(os_path, stat_res=None):
-    """Return whether a file is hidden based on its name."""
-    p = Path(os_path)
-
-    for part in p.parts:
-        if part.startswith('.') and part not in ('.', '..'):
-            return True
-
-    return False
-
-# replaces "import jupyter.core.paths is_hidden"
-def is_hidden(os_path, root_dir=None):
-    return is_file_hidden(os_path)
-
-# replaces "import os.path.samefile"
-def naive_same_file(path1, path2):
-    """Check if two paths are the same file"""
-    return  path1 == path2
+from .fileio import CS3FileManagerMixin, CS3HybridFileManagerMixin, locked_to_423, rename_errors_to_http
+from .paths import is_file_hidden, is_hidden, naive_same_file
 
 
 '''
@@ -73,11 +45,6 @@ class CS3FileContentsManager(CS3FileManagerMixin):
     def _validate_preferred_dir(self, proposal):
         return proposal.value
 
-    # Different import than upstream
-    @default("checkpoints_class")
-    def _checkpoints_class_default(self):
-        return CS3FileCheckpoints
-
     # Upstream uses os.access; caching is left to the TTL stat cache under
     # self.access, which - unlike a per-path dict - expires and is invalidated
     # by mutations.
@@ -91,19 +58,17 @@ class CS3FileContentsManager(CS3FileManagerMixin):
             self.log.error("Failed to check write permissions on %s", os_path)
             return False
 
-    # Lock ownership is surfaced in the models so foreign-locked files render
-    # read-only. Only checked when content is requested (opening the document);
-    # metadata-only gets stay a single stat.
+    # See CS3ContentsMixin._mark_read_only_if_foreign_locked.
     async def _notebook_model(self, path, content=True, require_hash=False):
         model = await super()._notebook_model(path, content=content, require_hash=require_hash)
-        if content and model["writable"] and await run_sync(self.foreign_lock_holder, self._get_os_path(path)):
-            model["writable"] = False
+        if content:
+            await run_sync(self._mark_read_only_if_foreign_locked, model, path)
         return model
 
     async def _file_model(self, path, content=True, format=None, require_hash=False):
         model = await super()._file_model(path, content=content, format=format, require_hash=require_hash)
-        if content and model["writable"] and await run_sync(self.foreign_lock_holder, self._get_os_path(path)):
-            model["writable"] = False
+        if content:
+            await run_sync(self._mark_read_only_if_foreign_locked, model, path)
         return model
 
     # Upstream is significantly more complex due to os functionality
@@ -117,21 +82,7 @@ class CS3FileContentsManager(CS3FileManagerMixin):
             raise web.HTTPError(400, f"Cannot delete file or directory {os_path!r}")
         if not await self.exists(path):
             raise web.HTTPError(404, "File or directory does not exist: %s" % os_path)
-        if self.is_dir(os_path):
-            self.log.debug("Removing directory %s", os_path)
-            with self.perm_to_403():
-                await run_sync(self.rmdir, os_path)
-        else:
-            # Pre-check so storages that don't enforce locks on delete still refuse.
-            holder = await run_sync(self.foreign_lock_holder, os_path)
-            if holder:
-                raise web.HTTPError(423, f"{path} is locked by {holder}")
-            self.log.debug("Unlinking file %s", os_path)
-            try:
-                with self.perm_to_403():
-                    await run_sync(self.unlink, os_path)
-            except FileLockedError as e:
-                raise web.HTTPError(423, f"{path} is locked") from e
+        await run_sync(self._delete, os_path, path, self.is_dir(os_path))
 
     async def _dir_model(self, path, content=True):
         """Build a model for a directory
@@ -284,7 +235,7 @@ class CS3FileContentsManager(CS3FileManagerMixin):
     # Upstream uses subprocess to call du command to get directory size
     # and upstream is significantly more complex so no point in pushing this upstream
     async def _get_dir_size(self, path: str = ".") -> str:
-        return self.get_dir_size(str(path))  # type:ignore[return-value]
+        return await run_sync(self.get_dir_size, str(path))  # type:ignore[return-value]
 
 class CS3HybridFileManager(CS3HybridFileManagerMixin):
     """A sync contents manager: CS3 for all mutations, FUSE as a metadata fast path.
@@ -293,11 +244,6 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
     with the os calls swapped for the hybrid_* helpers (FUSE-first, CS3
     fallback) and mutations routed through CS3 so they carry/respect locks.
     """
-
-    # We still want to use CS3FileCheckpoints since EOS handles this functionality for us.
-    @default("checkpoints_class")
-    def _checkpoints_class_default(self):
-        return CS3FileCheckpoints
 
     def is_writable(self, path):
         """Does the API style path correspond to a writable directory or file?"""
@@ -332,57 +278,6 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         os_path = self._get_os_path(path=path)
         ## replaced os.path.exists
         return self.hybrid_exists(os_path)
-
-    def _base_model(self, path):
-        """Build the common base of a contents model"""
-        os_path = self._get_os_path(path)
-        ## replaced os.lstat with FUSE-first/CS3-fallback stat
-        info = self.hybrid_lstat(os_path)
-
-        four_o_four = "file or directory does not exist: %r" % path
-
-        if not self.allow_hidden and is_hidden(os_path, self.root_dir):
-            self.log.info("Refusing to serve hidden file or directory %r, via 404 Error", os_path)
-            raise web.HTTPError(404, four_o_four)
-
-        try:
-            # size of file
-            size = info.st_size
-        except (ValueError, OSError):
-            self.log.warning("Unable to get size.")
-            size = None
-
-        try:
-            last_modified = tz.utcfromtimestamp(info.st_mtime)
-        except (ValueError, OSError):
-            self.log.warning("Invalid mtime %s for %s", info.st_mtime, os_path)
-            last_modified = datetime(1970, 1, 1, 0, 0, tzinfo=tz.UTC)
-
-        try:
-            created = tz.utcfromtimestamp(info.st_ctime)
-        except (ValueError, OSError):  # See above
-            self.log.warning("Invalid ctime %s for %s", info.st_ctime, os_path)
-            created = datetime(1970, 1, 1, 0, 0, tzinfo=tz.UTC)
-
-        # Create the base model.
-        model = {}
-        model["name"] = path.rsplit("/", 1)[-1]
-        model["path"] = path
-        model["last_modified"] = last_modified
-        model["created"] = created
-        model["content"] = None
-        model["format"] = None
-        model["mimetype"] = None
-        model["size"] = size
-        ## when the stat came from CS3 (FUSE miss), take writability from it
-        if isinstance(info, StatResult):
-            model["writable"] = info.writeable
-        else:
-            model["writable"] = self.is_writable(path)
-        model["hash"] = None
-        model["hash_algorithm"] = None
-
-        return model
 
     def get(self, path, content=True, type=None, format=None, require_hash=False):
         """Takes a path for an entity and returns its model"""
@@ -553,30 +448,19 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         ## Pre-check so storages that don't enforce locks on rename still refuse.
         ## Containers cannot hold EOS locks, so asking about one is a wasted RPC.
         if not is_dir:
-            holder = self.foreign_lock_holder(old_os_path)
-            if holder:
-                raise web.HTTPError(423, f"{old_path} is locked by {holder}")
+            self._raise_if_foreign_locked(old_os_path, old_path)
 
-        try:
-            with self.perm_to_403():
-                if is_dir and os.path.isdir(old_os_path):
-                    ## Nothing to arbitrate on a container: one rename syscall
-                    ## on the mount beats a Move RPC carrying a lock id that
-                    ## could never apply. Files keep going through CS3, where
-                    ## the lock id is what permits the move.
-                    shutil.move(old_os_path, new_os_path)
-                    self.invalidate_stat(old_os_path, new_os_path)
-                else:
-                    ## replaced shutil.move with CS3 rename (carries our lock id)
-                    self.move(old_os_path, new_os_path)
-        except web.HTTPError:
-            raise
-        except FileLockedError as e:
-            raise web.HTTPError(423, f"{old_path} is locked") from e
-        except FileNotFoundError:
-            raise web.HTTPError(404, f"File or directory does not exist: {old_path}") from None
-        except Exception as e:
-            raise web.HTTPError(500, f"Unknown error renaming file: {old_path} {e}") from e
+        with rename_errors_to_http(old_path), self.perm_to_403():
+            if is_dir and os.path.isdir(old_os_path):
+                ## Nothing to arbitrate on a container: one rename syscall
+                ## on the mount beats a Move RPC carrying a lock id that
+                ## could never apply. Files keep going through CS3, where
+                ## the lock id is what permits the move.
+                shutil.move(old_os_path, new_os_path)
+                self.invalidate_stat(old_os_path, new_os_path)
+            else:
+                ## replaced shutil.move with CS3 rename (carries our lock id)
+                self.move(old_os_path, new_os_path)
 
     def delete_file(self, path):
         """Delete file at path."""
@@ -588,40 +472,19 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         if not self.hybrid_exists(os_path):
             raise web.HTTPError(404, "file or directory does not exist: %r" % path)
 
-        if self.hybrid_isdir(os_path):
-            self.log.debug("Removing directory %s", os_path)
-            with self.perm_to_403():
-                ## reva's recycle bin replaces send2trash
-                self.rmdir(os_path)
-        else:
-            ## Pre-check so storages that don't enforce locks on delete still refuse.
-            holder = self.foreign_lock_holder(os_path)
-            if holder:
-                raise web.HTTPError(423, f"{path} is locked by {holder}")
-            self.log.debug("Unlinking file %s", os_path)
-            try:
-                with self.perm_to_403():
-                    ## replaced os.unlink with CS3 remove (carries our lock id)
-                    self.unlink(os_path)
-            except FileLockedError as e:
-                raise web.HTTPError(423, f"{path} is locked") from e
+        self._delete(os_path, path, self.hybrid_isdir(os_path))
 
-    # The models are overwritten so we can include locking information to
-    # determine if the file is writable. Lock state comes from CS3 GetLock
-    # (exact holder match) rather than FUSE xattrs, which lag behind and
-    # contain the EOS-encoded holder name. Only checked when content is
-    # requested (opening the document), so directory listings - which build
-    # each entry with content=False - don't pay one GetLock per file.
+    # See CS3ContentsMixin._mark_read_only_if_foreign_locked.
     def _notebook_model(self, path, content=True, require_hash=False):
         model = super()._notebook_model(path, content=content, require_hash=require_hash)
-        if content and model["writable"] and self.foreign_lock_holder(self._get_os_path(path)):
-            model["writable"] = False
+        if content:
+            self._mark_read_only_if_foreign_locked(model, path)
         return model
 
     def _file_model(self, path, content=True, format=None, require_hash=False):
         model = super()._file_model(path, content=content, format=format, require_hash=require_hash)
-        if content and model["writable"] and self.foreign_lock_holder(self._get_os_path(path)):
-            model["writable"] = False
+        if content:
+            self._mark_read_only_if_foreign_locked(model, path)
         return model
 
     def copy(self, from_path, to_path=None):
@@ -675,23 +538,18 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         ## which would clobber it. Costs nothing when the name was incremented -
         ## increment_filename just cached that same negative stat.
         if self.hybrid_isfile(dest_os_path):
-            holder = self.foreign_lock_holder(dest_os_path)
-            if holder:
-                raise web.HTTPError(423, f"{to_path} is locked by {holder}")
+            self._raise_if_foreign_locked(dest_os_path, to_path)
 
-        try:
-            with self.perm_to_403(dest_os_path):
-                if os.path.exists(src_os_path):
-                    ## folder copies already go through the mount (copytree);
-                    ## a single file has no reason to cost RPCs either
-                    shutil.copyfile(src_os_path, dest_os_path)
-                    self.invalidate_stat(dest_os_path)
-                else:
-                    ## source created through CS3 and not in the mount yet;
-                    ## copyfile_sync notes the change itself
-                    self.copyfile_sync(src_os_path, dest_os_path)
-        except FileLockedError as e:
-            raise web.HTTPError(423, f"{to_path} is locked") from e
+        with locked_to_423(to_path), self.perm_to_403(dest_os_path):
+            if os.path.exists(src_os_path):
+                ## folder copies already go through the mount (copytree);
+                ## a single file has no reason to cost RPCs either
+                shutil.copyfile(src_os_path, dest_os_path)
+                self.invalidate_stat(dest_os_path)
+            else:
+                ## source created through CS3 and not in the mount yet;
+                ## copyfile_sync notes the change itself
+                self.copyfile_sync(src_os_path, dest_os_path)
 
         model = self.get(to_path, content=False)
         self.emit(data={"action": "copy", "path": to_path, "source_path": from_path})
