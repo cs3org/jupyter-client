@@ -9,10 +9,10 @@ from __future__ import annotations
 from base64 import decodebytes, encodebytes
 import errno
 import os
-import time
 from contextlib import contextmanager, nullcontext
 from datetime import datetime
-from typing import Generator, TYPE_CHECKING
+from functools import cached_property
+from typing import Any, Generator, TYPE_CHECKING
 import nbformat
 
 from anyio.to_thread import run_sync
@@ -22,16 +22,18 @@ from tornado.web import HTTPError
 from traitlets import default
 
 from .cs3mixin import CS3Mixin
-from .cs3vfs.cs3lock import LOCK_NO_FILE
-from .cs3vfs.cs3vfs import MOUNT_LAG_TIMEOUT_SECONDS
+from .cs3vfs.cs3lock import LOCK_NO_FILE, CS3Locks
+from .cs3vfs.cs3versions import CS3Versions
+from .cs3vfs.cs3vfs import CS3Storage
 from .cs3vfs.statuscodehandler import FileLockedError
 from .cs3vfs.utils import StatResult
+from .documentlocks import DocumentLocks
 from .filecheckpoints import CS3FileCheckpoints
 from .paths import is_hidden
 
 
 if TYPE_CHECKING:
-    from .cs3vfs.cs3vfs import CS3File
+    from .cs3vfs.cs3file import CS3File
 
 
 def decode_model_content(content: str | None, format: str | None, os_path: str) -> bytes:
@@ -127,6 +129,29 @@ class CS3ContentsMixin(CS3Mixin):
     manager through run_sync.
     """
 
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
+        # Built here from this one thread (unless config validation needed them
+        # earlier), so run_sync workers never race to build two of each.
+        _ = self.document_locks, self.versions
+
+    @cached_property
+    def storage(self) -> CS3Storage:
+        return CS3Storage(self.session, self.lock_holder, self.lock_value)
+
+    @cached_property
+    def locks(self) -> CS3Locks:
+        return CS3Locks(self.session, self.storage, self.lock_holder, self.lock_value)
+
+    @cached_property
+    def versions(self) -> CS3Versions:
+        return CS3Versions(self.session)
+
+    # Locks of documents open in the frontend, driven by the /lock endpoint.
+    @cached_property
+    def document_locks(self) -> DocumentLocks:
+        return DocumentLocks(self.locks, self.lock_expiration, self.log)
+
     # Reva versions every write, so checkpoints are its file versions.
     @default("checkpoints_class")
     def _checkpoints_class_default(self):
@@ -142,8 +167,8 @@ class CS3ContentsMixin(CS3Mixin):
         mode = args[0] if args else kwargs.get("mode", "r")
         writing = any(c in mode for c in "wax")
         with self.perm_to_403(os_path), locked_to_423(os_path):
-            with self.write_lock(os_path) if writing else nullcontext():
-                with self.cs3open(os_path, *args, **kwargs) as f:
+            with self.locks.write_lock(os_path) if writing else nullcontext():
+                with self.storage.open(os_path, *args, **kwargs) as f:
                     yield f
 
     # Upstream's atomic_writing writes a temporary file on local disk.
@@ -156,14 +181,14 @@ class CS3ContentsMixin(CS3Mixin):
 
     def _write_locked(self, os_path, bcontent):
         """Write a whole file through CS3, under our lock."""
-        with self.perm_to_403(os_path), locked_to_423(os_path), self.write_lock(os_path) as state:
+        with self.perm_to_403(os_path), locked_to_423(os_path), self.locks.write_lock(os_path) as state:
             if not bcontent and state == LOCK_NO_FILE:
                 # New empty file: zero-byte uploads are unreliable, so touch it
                 # instead - via CS3, not FUSE, so reva sees it immediately and
                 # it can be locked right away.
-                self.vfs_touch(os_path)
+                self.storage.touch(os_path)
             else:
-                self.write_bytes(os_path, bcontent)
+                self.storage.write_bytes(os_path, bcontent)
 
     def _append_bytes(self, os_path, bcontent):
         """Append a chunk of an upload through CS3, like its first chunk."""
@@ -176,7 +201,7 @@ class CS3ContentsMixin(CS3Mixin):
         Storages that don't enforce locks on delete or rename would let those
         through, so they check first.
         """
-        holder = self.foreign_lock_holder(os_path)
+        holder = self.locks.foreign_lock_holder(os_path)
         if holder:
             raise HTTPError(423, f"{path} is locked by {holder}")
 
@@ -187,7 +212,7 @@ class CS3ContentsMixin(CS3Mixin):
     # directory listings - which build each entry with content=False - don't
     # pay one GetLock per file.
     def _mark_read_only_if_foreign_locked(self, model, path):
-        if model["writable"] and self.foreign_lock_holder(self._get_os_path(path)):
+        if model["writable"] and self.locks.foreign_lock_holder(self._get_os_path(path)):
             model["writable"] = False
         return model
 
@@ -196,14 +221,14 @@ class CS3ContentsMixin(CS3Mixin):
         if is_dir:
             self.log.debug("Removing directory %s", os_path)
             with self.perm_to_403():
-                self.rmdir(os_path)
+                self.storage.rmdir(os_path)
             return
         ## Pre-check so storages that don't enforce locks on delete still refuse.
         self._raise_if_foreign_locked(os_path, path)
         self.log.debug("Unlinking file %s", os_path)
         with self.perm_to_403(), locked_to_423(path):
             ## replaced os.unlink with CS3 remove (carries our lock id)
-            self.unlink(os_path)
+            self.storage.unlink(os_path)
 
     # Upstream's, with the stat and the writable flag taken from the hooks below.
     def _base_model(self, path):
@@ -259,7 +284,7 @@ class CS3ContentsMixin(CS3Mixin):
 
     def _model_stat(self, os_path):
         ## replaced os.lstat
-        return self.lstat(os_path)
+        return self.storage.lstat(os_path)
 
     def _model_writable(self, path, info):
         return self.is_writable(path)
@@ -278,10 +303,10 @@ class CS3HybridFileManagerMixin(CS3ContentsMixin):
         try:
             return os.lstat(os_path)
         except FileNotFoundError:
-            return self.lstat(os_path)
+            return self.storage.lstat(os_path)
 
     def hybrid_exists(self, os_path):
-        return os.path.exists(os_path) or self.vfs_exists(os_path)
+        return os.path.exists(os_path) or self.storage.exists(os_path)
 
     ## `or self.is_*` would ask CS3 whenever the mount answered "no" - including
     ## when the mount has the entry and it simply is not that type. Only a path
@@ -289,12 +314,12 @@ class CS3HybridFileManagerMixin(CS3ContentsMixin):
     def hybrid_isfile(self, os_path):
         if os.path.exists(os_path):
             return os.path.isfile(os_path)
-        return self.is_file(os_path)
+        return self.storage.is_file(os_path)
 
     def hybrid_isdir(self, os_path):
         if os.path.exists(os_path):
             return os.path.isdir(os_path)
-        return self.is_dir(os_path)
+        return self.storage.is_dir(os_path)
 
     def mount_lags_in(self, os_dir: str) -> bool:
         """Does the mount still disagree about something we changed via CS3?
@@ -308,17 +333,10 @@ class CS3HybridFileManagerMixin(CS3ContentsMixin):
 
         Costs nothing when nothing is pending, which is the steady state.
         """
-        pending = [p for p in self._pending_paths if os.path.dirname(p) == os_dir]
-        if not pending:
-            return False
-
-        now = time.monotonic()
         stale = False
-        for path in pending:
-            if now - self._pending_paths[path] > MOUNT_LAG_TIMEOUT_SECONDS:
-                del self._pending_paths[path]  # give up; stop paying for it
-            elif os.path.exists(path) == self.vfs_exists(path):
-                del self._pending_paths[path]  # the mount has caught up
+        for path in self.storage.pending.in_dir(os_dir):
+            if os.path.exists(path) == self.storage.exists(path):
+                self.storage.pending.settle(path)  # the mount has caught up
             else:
                 stale = True
         return stale
@@ -326,7 +344,7 @@ class CS3HybridFileManagerMixin(CS3ContentsMixin):
     def cs3_entry_names(self, os_dir: str):
         """Names in a directory according to CS3, or None if it cannot say."""
         try:
-            return [name for name, _ in self.list_dir(os_dir)]
+            return [name for name, _ in self.storage.list_dir(os_dir)]
         except OSError:
             return None
 
@@ -359,7 +377,7 @@ class CS3HybridFileManagerMixin(CS3ContentsMixin):
         if not self.hybrid_isfile(os_path):
             raise HTTPError(400, "Cannot read non-file %s" % os_path)
         with self.perm_to_403(os_path):
-            bcontent = self.read_bytes(os_path)
+            bcontent = self.storage.read_bytes(os_path)
         return encode_model_content(bcontent, format, os_path, raw)
 
     # Upstream sync LargeFileManager._save_large_file with the builtin open
@@ -394,7 +412,7 @@ class CS3FileManagerMixin(CS3ContentsMixin):
         404: if path is outside root
         """
 
-        root = self.abs_path(self.root_dir)  # type:ignore[attr-defined]
+        root = self.root_dir  # type:ignore[attr-defined]
         if os.path.splitdrive(path)[0]:
             raise HTTPError(404, "%s is not a relative API path" % path)
         os_path = to_os_path(ApiPath(path), root)
@@ -403,23 +421,23 @@ class CS3FileManagerMixin(CS3ContentsMixin):
         if "\0" in os_path:
             raise HTTPError(404, f"{path} is not a valid path")
 
-        if not (self.abs_path(os_path) + os.path.sep).startswith(root):
+        if not (os_path + os.path.sep).startswith(root):
             raise HTTPError(404, "%s is outside root contents directory" % path)
         return os_path
 
     # Completely replaced with CS3 functionality (used to call shutil copy)
     async def _copy(self, src, dest):
         """copy src to dest using cs3 filesystem while checking permissions"""
-        if not self.access(src, os.R_OK):
+        if not self.storage.access(src, os.R_OK):
             self.log.debug("Source file, %s, is not readable", src, exc_info=True)
             raise PermissionError(errno.EACCES, f"File is not readable: {src}")
 
         dest_parent = os.path.dirname(dest) or dest
-        if not self.access(dest_parent, os.W_OK):
+        if not self.storage.access(dest_parent, os.W_OK):
             self.log.debug("Destination directory, %s, is not writable", dest_parent, exc_info=True)
             raise PermissionError(errno.EACCES, f"Destination is not writable: {dest}")
 
-        await self.copyfile(src, dest)
+        await run_sync(self.storage.copyfile, src, dest)
 
     # Replaced with CS3 functionality
     async def _read_notebook(
@@ -468,8 +486,8 @@ class CS3FileManagerMixin(CS3ContentsMixin):
         (content, format, byte_content) It returns the content in the given format
         as well as the raw byte content.
         """
-        if not self.is_file(os_path):
+        if not self.storage.is_file(os_path):
             raise HTTPError(404, f"File not found: {os_path}")
         with self.perm_to_403(os_path):
-            bcontent = await run_sync(self.read_bytes, os_path)
+            bcontent = await run_sync(self.storage.read_bytes, os_path)
         return encode_model_content(bcontent, format, os_path, raw)

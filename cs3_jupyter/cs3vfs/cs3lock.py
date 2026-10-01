@@ -2,6 +2,7 @@ from contextlib import contextmanager
 from typing import Iterator, Optional, Union
 import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
 from cs3client.exceptions import NotFoundException
+from .session import CS3Service, CS3Session
 from .statuscodehandler import FileLockedError, translate_cs3_error
 from .utils import retry_on_auth_failure, resource_from_path
 
@@ -11,8 +12,14 @@ LOCK_FOREIGN = "foreign"
 LOCK_NO_FILE = "no_file"
 
 
-class CS3Lock:
+class CS3Locks(CS3Service):
     """Locks taken with our own holder (lock_holder) and lock id (lock_value)."""
+
+    def __init__(self, session: CS3Session, storage, lock_holder: str, lock_value: str):
+        super().__init__(session)
+        self.storage = storage
+        self.lock_holder = lock_holder
+        self.lock_value = lock_value
 
     def acquire_or_refresh_lock(self, path: str) -> str:
         """Try to set or refresh our lock on the given path.
@@ -46,7 +53,7 @@ class CS3Lock:
             # SetLock hides a missing file the same way. A file that is not
             # there yet is the normal case for a first save (it gets locked
             # after creation), anything else is a genuine failure.
-            if not self.vfs_exists(path):
+            if not self.storage.exists(path):
                 return LOCK_NO_FILE
             raise
 

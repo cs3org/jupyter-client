@@ -51,7 +51,7 @@ class SharesHandler(CS3HandlerBase):
         grantee_type = body.get("grantee_type", "USER")
 
         self.log.info(f"Creating share for path: {path} to {grantee_type} {opaque_id} with role {role}")
-        share = await self.call(self.cs3.create_share, path, opaque_id, idp, role, grantee_type)
+        share = await self.call(self.cs3.sharing.create_share, path, opaque_id, idp, role, grantee_type)
         self.set_status(201)
         self.write({"created": True, "data": body, "path": path, "share": proto_dict(share)})
 
@@ -69,7 +69,7 @@ class SharesHandler(CS3HandlerBase):
         display_name = body.get("display_name", None)
 
         self.log.info(f"Updating share: {share_id} with role {role} and display name {display_name}")
-        share = await self.call(self.cs3.update_share, share_id, role=role, display_name=display_name)
+        share = await self.call(self.cs3.sharing.update_share, share_id, role=role, display_name=display_name)
         self.write({"updated": True, "data": body, "share": proto_dict(share)})
 
     @web.authenticated
@@ -79,7 +79,7 @@ class SharesHandler(CS3HandlerBase):
         :field share_id: The ID of the share to remove (REQUIRED).
         """
         share_id = self.get_query_argument("share_id", default=None)
-        await self.call(self.cs3.remove_share, share_id)
+        await self.call(self.cs3.sharing.remove_share, share_id)
         self.set_status(204)
 
 
@@ -104,7 +104,7 @@ class LinkHandler(CS3HandlerBase):
 
         self.log.info(f"Creating public share for path: {path} with role {role}")
         share = await self.call(
-            self.cs3.create_public_share,
+            self.cs3.sharing.create_public_share,
             path,
             role,
             password=body.get("password", None),
@@ -140,7 +140,7 @@ class LinkHandler(CS3HandlerBase):
 
         self.log.info(f"Updating public share: {share_id} with type {type} role {role}")
         share = await self.call(
-            self.cs3.update_public_share,
+            self.cs3.sharing.update_public_share,
             share_id,
             type=type,
             role=role,
@@ -160,7 +160,7 @@ class LinkHandler(CS3HandlerBase):
         :field share_id: The ID of the share to remove (REQUIRED).
         """
         share_id = self.get_query_argument("share_id", default=None)
-        await self.call(self.cs3.remove_public_share, share_id)
+        await self.call(self.cs3.sharing.remove_public_share, share_id)
         self.set_status(204)
 
 
@@ -168,7 +168,7 @@ class SharedWithMeHandler(CS3HandlerBase):
     @web.authenticated
     async def get(self):
         def fetch():
-            shares, _ = self.cs3.list_received_existing_shares()
+            shares, _ = self.cs3.sharing.list_received_existing_shares()
             return _with_user_info(self.cs3, shares, "creator_user_info", _creator_user_id, self.log)
 
         self.write({"shares": await self.call(fetch)})
@@ -181,9 +181,9 @@ class SharedByMeHandler(CS3HandlerBase):
     @web.authenticated
     async def get(self):
         def fetch():
-            idp, opaque_id = self.cs3.user_idp, self.cs3.user_opaque_id
-            shares, _ = self.cs3.list_existing_shares_by_creator(idp, opaque_id)
-            public_shares, _ = self.cs3.list_existing_public_shares_by_creator(idp, opaque_id)
+            idp, opaque_id = self.cs3.session.user_idp, self.cs3.session.user_opaque_id
+            shares, _ = self.cs3.sharing.list_existing_shares_by_creator(idp, opaque_id)
+            public_shares, _ = self.cs3.sharing.list_existing_public_shares_by_creator(idp, opaque_id)
             return (
                 _with_user_info(self.cs3, shares, "grantee_user_info", _grantee_user_id, self.log),
                 proto_dicts(public_shares),
@@ -203,8 +203,8 @@ class SharedByResourceHandler(CS3HandlerBase):
         path = self.get_query_argument("path", default="")
 
         def fetch():
-            shares, _ = self.cs3.list_existing_shares_by_resource(path)
-            public_shares, _ = self.cs3.list_existing_public_shares_by_resource(path)
+            shares, _ = self.cs3.sharing.list_existing_shares_by_resource(path)
+            public_shares, _ = self.cs3.sharing.list_existing_public_shares_by_resource(path)
             return (
                 _with_user_info(self.cs3, shares, "grantee_user_info", _grantee_user_id, self.log),
                 proto_dicts(public_shares),
