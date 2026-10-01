@@ -14,7 +14,10 @@ from cs3client.exceptions import AuthenticationException, PermissionDeniedExcept
 # while lock conflicts stay distinguishable from other storage errors.
 # No errno is set, so perm_to_403 will not swallow it.
 class FileLockedError(OSError):
-    pass
+    def __init__(self, *args, holder=None):
+        super().__init__(*args)
+        # Who holds the lock, when the raiser knows (a rejected write does not).
+        self.holder = holder
 
 
 # The token is the problem (expired, or not read yet), not the permissions:

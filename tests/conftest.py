@@ -204,6 +204,13 @@ class FakeCS3(object):
         del self.locks[path]
 
 
+class FakeVersions:
+    """Stands in for cs3client's `client.checkpoint`: no file has versions yet."""
+
+    def list_file_versions(self, token, resource):
+        return []
+
+
 class FakeAuth:
     def __init__(self, client=None):
         pass
@@ -229,7 +236,7 @@ def patch_cs3(monkeypatch, fake_cs3):
     monkeypatch.setattr(
         cs3mixin_module,
         "CS3Client",
-        lambda config, name, log: SimpleNamespace(file=fake_cs3),
+        lambda config, name, log: SimpleNamespace(file=fake_cs3, checkpoint=FakeVersions()),
     )
     monkeypatch.setattr(cs3mixin_module, "Auth", FakeAuth)
     return fake_cs3

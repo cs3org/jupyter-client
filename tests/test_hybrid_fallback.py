@@ -308,3 +308,22 @@ def test_listing_falls_back_to_the_mount_when_cs3_cannot_list(manager, patch_cs3
     # the parent is not a listable container in CS3, so list_dir fails
 
     assert [e["name"] for e in manager.get("", content=True)["content"]] == ["a.txt"]
+
+
+def test_write_rejected_by_a_lock_race_is_423_not_500(manager, patch_cs3, fuse_dir, monkeypatch):
+    """Locked between our lock check and the upload: the storage refuses the write."""
+    os_path = f"{fuse_dir}/doc.txt"
+    patch_cs3.put(os_path, b"theirs", lock={"app_name": "collabora", "lock_id": "x"})
+    monkeypatch.setattr(manager, "acquire_or_refresh_lock", lambda path: "held")
+    with pytest.raises(HTTPError) as exc:
+        manager.save({"type": "file", "content": "mine", "format": "text"}, "doc.txt")
+    assert exc.value.status_code == 423
+    assert patch_cs3.files[os_path] == b"theirs"
+
+
+def test_binary_file_round_trips_through_cs3(manager, patch_cs3, fuse_dir):
+    data = bytes(range(256))
+    content = __import__("base64").encodebytes(data).decode("ascii")
+    manager.save({"type": "file", "content": content, "format": "base64"}, "blob.bin")
+    assert patch_cs3.files[f"{fuse_dir}/blob.bin"] == data
+    assert manager.get("blob.bin", content=True, format="base64")["content"] == content

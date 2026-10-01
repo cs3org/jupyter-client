@@ -179,3 +179,29 @@ def test_checkpoints_share_the_managers_client(patch_cs3, monkeypatch):
 
     assert checkpoints == [{"id": "v1", "last_modified": "5"}]
     assert len(clients) == 1
+
+
+def test_write_rejected_by_a_lock_race_is_423_not_500(manager, patch_cs3, monkeypatch):
+    """Locked between our lock check and the upload: the storage refuses the write."""
+    patch_cs3.put(f"{ROOT}/f.txt", b"theirs", lock={"app_name": "collabora", "lock_id": "x"})
+    monkeypatch.setattr(manager, "acquire_or_refresh_lock", lambda path: "held")
+    with pytest.raises(HTTPError) as exc:
+        asyncio.run(manager.save({"type": "file", "content": "mine", "format": "text"}, "f.txt"))
+    assert exc.value.status_code == 423
+    assert patch_cs3.files[f"{ROOT}/f.txt"] == b"theirs"
+
+
+def test_undecodable_base64_is_400(manager, patch_cs3):
+    with pytest.raises(HTTPError) as exc:
+        asyncio.run(manager.save({"type": "file", "content": "abc", "format": "base64"}, "f.bin"))
+    assert exc.value.status_code == 400
+
+
+def test_notebook_saved_with_trailing_newline_like_nbformat_write(manager, patch_cs3):
+    import nbformat
+
+    nb = nbformat.v4.new_notebook()
+    asyncio.run(manager.save({"type": "notebook", "content": nb}, "nb.ipynb"))
+    saved = patch_cs3.files[f"{ROOT}/nb.ipynb"]
+    assert saved.endswith(b"\n")
+    assert nbformat.reads(saved.decode(), as_version=4) == nb

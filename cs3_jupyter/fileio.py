@@ -6,15 +6,13 @@ Utilities for file-based Contents/Checkpoints managers.
 
 from __future__ import annotations
 
-from base64 import b64decode, decodebytes, encodebytes
+from base64 import decodebytes, encodebytes
 import errno
 import os
 import time
 from contextlib import contextmanager
 from typing import Generator, TYPE_CHECKING
 import nbformat
-
-
 
 from tornado.web import HTTPError
 from anyio.to_thread import run_sync
@@ -23,10 +21,80 @@ from jupyter_server.utils import ApiPath, to_api_path, to_os_path
 from .cs3mixin import CS3Mixin
 from .cs3vfs.cs3lock import LOCK_NO_FILE
 from .cs3vfs.cs3vfs import MOUNT_LAG_TIMEOUT_SECONDS
+from .cs3vfs.statuscodehandler import FileLockedError
 
 
 if TYPE_CHECKING:
     from .cs3vfs.cs3vfs import CS3File
+
+
+def decode_model_content(content: str | None, format: str | None, os_path: str) -> bytes:
+    """The bytes a file model's content stands for; 400 if it cannot be decoded."""
+    if format not in {"text", "base64"}:
+        raise HTTPError(
+            400,
+            "Must specify format of file contents as 'text' or 'base64'",
+        )
+    if not content:
+        return b""
+    try:
+        if format == "text":
+            return content.encode("utf8")
+        return decodebytes(content.encode("ascii"))
+    except Exception as e:
+        raise HTTPError(400, f"Encoding error saving {os_path}: {e}") from e
+
+
+def encode_model_content(bcontent: bytes, format: str | None, os_path: str, raw: bool = False):
+    """File bytes as upstream's _read_file returns them: (content, format[, bcontent]).
+
+    format 'text' decodes UTF-8 (400 if it is not), 'base64' encodes, 'byte'
+    passes the bytes through, and None tries text before falling back to base64.
+    """
+    if format == "byte":
+        # Not for http response but internal use
+        return (bcontent, "byte", bcontent) if raw else (bcontent, "byte")
+
+    if format is None or format == "text":
+        # Try to interpret as unicode if format is unknown or if unicode
+        # was explicitly requested.
+        try:
+            text = bcontent.decode("utf8")
+            return (text, "text", bcontent) if raw else (text, "text")
+        except UnicodeError as e:
+            if format == "text":
+                raise HTTPError(
+                    400,
+                    "%s is not UTF-8 encoded" % os_path,
+                    reason="bad format",
+                ) from e
+    b64 = encodebytes(bcontent).decode("ascii")
+    return (b64, "base64", bcontent) if raw else (b64, "base64")
+
+
+def notebook_bytes(nb, capture_validation_error=None) -> bytes:
+    """A notebook serialized the way nbformat.write puts it on disk."""
+    text = nbformat.writes(
+        nb,
+        version=nbformat.NO_CONVERT,
+        capture_validation_error=capture_validation_error,
+    )
+    if not text.endswith("\n"):
+        text += "\n"
+    return text.encode("utf8")
+
+
+@contextmanager
+def locked_to_423(os_path: str):
+    """Context manager turning a lock conflict into a 423.
+
+    Upstream save() turns anything that is not an HTTPError into a 500.
+    """
+    try:
+        yield
+    except FileLockedError as e:
+        # A rejected write does not say who holds the lock; ensure_write_lock does.
+        raise HTTPError(423, str(e) if e.holder else f"{os_path} is locked") from e
 
 
 class CS3HybridFileManagerMixin(CS3Mixin):
@@ -43,10 +111,11 @@ class CS3HybridFileManagerMixin(CS3Mixin):
         # already and write via cs3open directly; this path serves everything
         # else - chunked appends and any upstream caller - so it must lock.
         mode = args[0] if args else kwargs.get("mode", "r")
-        if any(c in mode for c in "wax"):
-            self.ensure_write_lock(os_path)
-        with self.perm_to_403(os_path), self.cs3open(os_path, *args, **kwargs) as f:
-            yield f
+        with self.perm_to_403(os_path), locked_to_423(os_path):
+            if any(c in mode for c in "wax"):
+                self.ensure_write_lock(os_path)
+            with self.cs3open(os_path, *args, **kwargs) as f:
+                yield f
 
     # We have to overwrite atomic_writing to use our own open method.
     @contextmanager
@@ -117,111 +186,50 @@ class CS3HybridFileManagerMixin(CS3Mixin):
 
     def _save_file(self, os_path, content, format):
         """Save content of a generic file."""
-        state = self.ensure_write_lock(os_path)
-        if (content == "" or content is None) and state == LOCK_NO_FILE:
-            # New empty file: create it via CS3 (not FUSE) so reva sees it
-            # immediately and it can be locked right away.
-            self.vfs_touch(os_path)
-            self.lock_after_create(os_path)
-            return
-        if format not in {"text", "base64"}:
-            raise HTTPError(
-                400,
-                "Must specify format of file contents as 'text' or 'base64'",
-            )
-        try:
-            if format == "text":
-                bcontent = content.encode("utf8")
+        bcontent = decode_model_content(content, format, os_path)
+        with self.perm_to_403(os_path), locked_to_423(os_path):
+            state = self.ensure_write_lock(os_path)
+            if not bcontent and state == LOCK_NO_FILE:
+                # New empty file: create it via CS3 (not FUSE) so reva sees it
+                # immediately and it can be locked right away.
+                self.vfs_touch(os_path)
             else:
-                b64_bytes = content.encode("ascii")
-                bcontent = decodebytes(b64_bytes)
-        except Exception as e:
-            raise HTTPError(400, f"Encoding error saving {os_path}: {e}") from e
-
-        ## lock already taken above, so bypass open()'s ensure_write_lock
-        with self.perm_to_403(os_path), self.cs3open(os_path, "wb") as f:
-            f.write(bcontent)
-        if state == LOCK_NO_FILE:
-            self.lock_after_create(os_path)
+                self.write_bytes(os_path, bcontent)
+            if state == LOCK_NO_FILE:
+                self.lock_after_create(os_path)
 
     def _save_notebook(self, os_path, nb, capture_validation_error=None):
         """Save a notebook to an os_path."""
         # New notebooks are ordinary CS3 writes: the write creates the file in
         # reva, and the hybrid_* stat fallbacks cover the FUSE propagation lag.
-        state = self.ensure_write_lock(os_path)
-        ## lock already taken above, so bypass open()'s ensure_write_lock
-        with self.perm_to_403(os_path), self.cs3open(os_path, "w", encoding="utf-8") as f:
-            nbformat.write(
-                nb,
-                f,
-                version=nbformat.NO_CONVERT,
-                capture_validation_error=capture_validation_error,
-            )
-        if state == LOCK_NO_FILE:
-            self.lock_after_create(os_path)
+        bcontent = notebook_bytes(nb, capture_validation_error)
+        with self.perm_to_403(os_path), locked_to_423(os_path):
+            state = self.ensure_write_lock(os_path)
+            self.write_bytes(os_path, bcontent)
+            if state == LOCK_NO_FILE:
+                self.lock_after_create(os_path)
 
-    # Copied from upstream sync FileManagerMixin._read_file; only the isfile
-    # gate is changed so fresh CS3-created files pass before FUSE catches up
-    # (the body already reads via self.open -> CS3).
+    # Upstream sync FileManagerMixin._read_file, with the isfile gate changed
+    # so fresh CS3-created files pass before FUSE catches up, and the bytes
+    # read via CS3.
     def _read_file(self, os_path, format, raw=False):
         """Read a non-notebook file."""
         ## replaced os.path.isfile
         if not self.hybrid_isfile(os_path):
             raise HTTPError(400, "Cannot read non-file %s" % os_path)
+        with self.perm_to_403(os_path):
+            bcontent = self.read_bytes(os_path)
+        return encode_model_content(bcontent, format, os_path, raw)
 
-        with self.open(os_path, "rb") as f:
-            bcontent = f.read()
-
-        if format == "byte":
-            # Not for http response but internal use
-            return (bcontent, "byte", bcontent) if raw else (bcontent, "byte")
-
-        if format is None or format == "text":
-            # Try to interpret as unicode if format is unknown or if unicode
-            # was explicitly requested.
-            try:
-                return (
-                    (bcontent.decode("utf8"), "text", bcontent)
-                    if raw
-                    else (bcontent.decode("utf8"), "text")
-                )
-            except UnicodeError as e:
-                if format == "text":
-                    raise HTTPError(
-                        400,
-                        "%s is not UTF-8 encoded" % os_path,
-                        reason="bad format",
-                    ) from e
-        return (
-            (encodebytes(bcontent).decode("ascii"), "base64", bcontent)
-            if raw
-            else (encodebytes(bcontent).decode("ascii"), "base64")
-        )
-
-    # Copied from upstream sync LargeFileManager._save_large_file with the
-    # builtin open replaced by self.open, so chunked appends go through CS3
-    # instead of mixing CS3 (chunk 1) with FUSE (chunks 2+).
+    # Upstream sync LargeFileManager._save_large_file with the builtin open
+    # replaced by self.open, so chunked appends go through CS3 instead of
+    # mixing CS3 (chunk 1) with FUSE (chunks 2+).
     def _save_large_file(self, os_path, content, format):
         """Save content of a generic file."""
-        if format not in {"text", "base64"}:
-            raise HTTPError(
-                400,
-                "Must specify format of file contents as 'text' or 'base64'",
-            )
-        try:
-            if format == "text":
-                bcontent = content.encode("utf8")
-            else:
-                b64_bytes = content.encode("ascii")
-                bcontent = b64decode(b64_bytes)
-        except Exception as e:
-            raise HTTPError(400, f"Encoding error saving {os_path}: {e}") from e
-
-        with self.perm_to_403(os_path):
-            ## replaced builtin open with self.open (CS3)
-            with self.open(os_path, "ab") as f:
-                f.write(bcontent)
-
+        bcontent = decode_model_content(content, format, os_path)
+        ## replaced builtin open with self.open (CS3)
+        with self.open(os_path, "ab") as f:
+            f.write(bcontent)
 
 
 class CS3FileManagerMixin(CS3Mixin):
@@ -235,10 +243,11 @@ class CS3FileManagerMixin(CS3Mixin):
         # Only writes need the lock; reads of a foreign-locked file are fine
         # (the model is marked read-only instead).
         mode = args[0] if args else kwargs.get("mode", "r")
-        if any(c in mode for c in "wax"):
-            self.ensure_write_lock(os_path)
-        with self.perm_to_403(os_path), self.cs3open(os_path, *args, **kwargs) as f:
-            yield f
+        with self.perm_to_403(os_path), locked_to_423(os_path):
+            if any(c in mode for c in "wax"):
+                self.ensure_write_lock(os_path)
+            with self.cs3open(os_path, *args, **kwargs) as f:
+                yield f
 
 
     # Moved from "FileManagerMixin (we only use the Async version)"
@@ -325,31 +334,24 @@ class CS3FileManagerMixin(CS3Mixin):
 
     async def _save_notebook(self, os_path, nb, capture_validation_error=None):
         """Save a notebook to an os_path."""
-        nb_text = nbformat.writes(
-            nb,
-            version=nbformat.NO_CONVERT,
-            capture_validation_error=capture_validation_error,
-        )
-        state = await run_sync(self.ensure_write_lock, os_path)
-        await run_sync(self.vfs_save_file, os_path, nb_text, "text")
-        if state == LOCK_NO_FILE:
-            await run_sync(self.lock_after_create, os_path)
+        bcontent = notebook_bytes(nb, capture_validation_error)
+        await run_sync(self._write_locked, os_path, bcontent)
 
     async def _save_file(self, os_path, content, format):
         """Save content of a generic file."""
-        if format not in {"text", "base64"}:
-            raise HTTPError(
-                400,
-                "Must specify format of file contents as 'text' or 'base64'",
-            )
-        state = await run_sync(self.ensure_write_lock, os_path)
-        if (content == "" or content is None) and state == LOCK_NO_FILE:
-            # Zero-byte uploads are unreliable; create new empty files with touch.
-            await run_sync(self.vfs_touch, os_path)
-        else:
-            await run_sync(self.vfs_save_file, os_path, content, format)
-        if state == LOCK_NO_FILE:
-            await run_sync(self.lock_after_create, os_path)
+        bcontent = decode_model_content(content, format, os_path)
+        await run_sync(self._write_locked, os_path, bcontent)
+
+    def _write_locked(self, os_path, bcontent):
+        with self.perm_to_403(os_path), locked_to_423(os_path):
+            state = self.ensure_write_lock(os_path)
+            if not bcontent and state == LOCK_NO_FILE:
+                # Zero-byte uploads are unreliable; create new empty files with touch.
+                self.vfs_touch(os_path)
+            else:
+                self.write_bytes(os_path, bcontent)
+            if state == LOCK_NO_FILE:
+                self.lock_after_create(os_path)
 
     # replaced with CS3 functionality
     async def _read_file(  # type: ignore[override]
@@ -376,5 +378,6 @@ class CS3FileManagerMixin(CS3Mixin):
         """
         if not self.is_file(os_path):
             raise HTTPError(404, f"File not found: {os_path}")
-
-        return self.read_file(os_path, format, raw)
+        with self.perm_to_403(os_path):
+            bcontent = await run_sync(self.read_bytes, os_path)
+        return encode_model_content(bcontent, format, os_path, raw)
