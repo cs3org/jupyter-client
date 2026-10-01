@@ -22,13 +22,25 @@ There are two contents managers, both importable from
 
 The package is layered:
 
-| Path | Contents |
-| --- | --- |
-| `cs3_jupyter/cs3api/` | Access to the CS3 APIs, with no Jupyter imports. `CS3Session` owns the cs3client connection and the token. The services built on it cover storage (`CS3Storage`, with a short-lived stat cache), locks, versions, sharing, users, groups and spaces. Failures are raised as builtin `OSError`s (`errors.py`). |
-| `cs3_jupyter/cs3mixin.py` | `CS3Mixin`: the configuration traits (`c.CS3Mixin.*`) and the session built from them. |
-| `cs3_jupyter/contents/` | The contents managers. `common.py` holds what both share (`CS3ContentsMixin`): lock-aware writes, read-only models for files someone else has locked, and model encoding. `upstream.py` holds upstream methods where only the os calls were replaced, which could be pushed upstream; `pure.py` and `hybrid.py` hold the ones that differ more. `checkpoints.py` serves reva's file versions as checkpoints. |
-| `cs3_jupyter/documentlocks.py` | `DocumentLocks`: holds the lock of each document open in the frontend, counting sessions and refreshing the locks in the background. |
-| `cs3_jupyter/server_extension/` | The REST endpoints. `/lock` is driven by the contents manager's `DocumentLocks`. Sharing, user and group search, quota and spaces go through the extension's own CS3 client. |
+- `cs3_jupyter/cs3api/`: access to the CS3 APIs, with no Jupyter imports.
+  `CS3Session` owns the cs3client connection and the token. The services
+  built on it cover storage (`CS3Storage`, with a short-lived stat cache),
+  locks, versions, sharing, users, groups and spaces. Failures are raised as
+  builtin `OSError`s (`errors.py`).
+- `cs3_jupyter/cs3mixin.py`: `CS3Mixin`, the configuration traits
+  (`c.CS3Mixin.*`) and the session built from them.
+- `cs3_jupyter/contents/`: the contents managers. `common.py` holds what both
+  share (`CS3ContentsMixin`): lock-aware writes, read-only models for files
+  someone else has locked, and model encoding. `upstream.py` holds upstream
+  methods where only the os calls were replaced, which could be pushed
+  upstream; `pure.py` and `hybrid.py` hold the ones that differ more.
+  `checkpoints.py` serves reva's file versions as checkpoints.
+- `cs3_jupyter/documentlocks.py`: `DocumentLocks` holds the lock of each
+  document open in the frontend, counting sessions and refreshing the locks
+  in the background.
+- `cs3_jupyter/server_extension/`: the REST endpoints. `/lock` is driven by
+  the contents manager's `DocumentLocks`. Sharing, user and group search,
+  quota and spaces go through the extension's own CS3 client.
 
 ### JupyterLab Extension
 

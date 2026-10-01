@@ -7,5 +7,5 @@ import tseslint from "typescript-eslint";
 export default defineConfig(
   eslint.configs.recommended,
   tseslint.configs.recommended,
-  globalIgnores(["node_modules/", "cs3_jupyter_client/", ".venv/", "lib/", "dist/"]),
+  globalIgnores(["node_modules/", "cs3_jupyter/labextension/", ".venv/", "lib/", "dist/"]),
 );

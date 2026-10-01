@@ -1,5 +1,5 @@
-import { ServerConnection } from '@jupyterlab/services';
 import type { ISignal } from '@lumino/signaling';
+import { requestAPI } from './api';
 import { LOG_PREFIX } from './constants';
 
 /**
@@ -9,10 +9,10 @@ import { LOG_PREFIX } from './constants';
  */
 export interface ITrackedDocumentWidget {
   isDisposed: boolean;
-  disposed: ISignal<any, void>;
+  disposed: ISignal<unknown, void>;
   context: {
     path: string;
-    pathChanged: ISignal<any, string>;
+    pathChanged: ISignal<unknown, string>;
   };
 }
 
@@ -36,10 +36,8 @@ interface ILockResponse {
   holder?: string;
 }
 
-function lockRequest(method: 'POST' | 'DELETE', path: string, sessionId: string): Promise<Response> {
-  const settings = ServerConnection.makeSettings();
-  const query = `?path=${encodeURIComponent(path)}&session_id=${encodeURIComponent(sessionId)}`;
-  return ServerConnection.makeRequest(settings.baseUrl + 'lock' + query, { method }, settings);
+function lockRequest(method: 'POST' | 'DELETE', path: string, sessionId: string): Promise<ILockResponse> {
+  return requestAPI<ILockResponse>('lock', { method }, { path, session_id: sessionId });
 }
 
 function newSessionId(): string {
@@ -56,13 +54,9 @@ export class DocumentLockTracker {
   /** Read the server's lock expiration to derive the heartbeat period. */
   async initialize(): Promise<void> {
     try {
-      const settings = ServerConnection.makeSettings();
-      const resp = await ServerConnection.makeRequest(settings.baseUrl + 'lock', {}, settings);
-      if (resp.ok) {
-        const data = await resp.json();
-        if (typeof data.expiration === 'number' && data.expiration > 0) {
-          this.expirationSeconds = data.expiration;
-        }
+      const data = await requestAPI<{ expiration?: unknown }>('lock');
+      if (typeof data.expiration === 'number' && data.expiration > 0) {
+        this.expirationSeconds = data.expiration;
       }
     } catch (err) {
       console.warn(`${LOG_PREFIX} Could not read lock expiration, using default`, err);
@@ -85,17 +79,12 @@ export class DocumentLockTracker {
 
     const open = async (p: string): Promise<void> => {
       try {
-        const resp = await lockRequest('POST', p, sessionId);
-        if (!resp.ok) {
-          console.warn(`${LOG_PREFIX} Could not lock ${p}: HTTP ${resp.status}`);
-          return;
-        }
-        const data = (await resp.json()) as ILockResponse;
+        const data = await lockRequest('POST', p, sessionId);
         if (data.read_only) {
           console.info(`${LOG_PREFIX} ${p} is locked by ${data.holder ?? 'another application'}, opening read-only`);
         }
       } catch (err) {
-        console.warn(`${LOG_PREFIX} Lock request for ${p} failed`, err);
+        console.warn(`${LOG_PREFIX} Could not lock ${p}`, err);
       }
     };
 

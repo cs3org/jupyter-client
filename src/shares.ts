@@ -1,4 +1,5 @@
-import { ServerConnection } from '@jupyterlab/services';
+import { requestAPI } from './api';
+import { toApiPath } from './paths';
 
 type GranteeType = 'GRANTEE_TYPE_USER' | 'GRANTEE_TYPE_GROUP' | 'GRANTEE_TYPE_INVALID';
 type ShareDirection = 'BY_ME' | 'WITH_ME';
@@ -16,6 +17,8 @@ interface RawGroupGrantee {
   group_id: { opaque_id: string };
 }
 
+type RawGrantee = RawUserGrantee | RawGroupGrantee;
+
 export type ResourceType = 'RESOURCE_TYPE_CONTAINER' | 'RESOURCE_TYPE_FILE';
 
 interface RawResourceInfo {
@@ -24,11 +27,16 @@ interface RawResourceInfo {
   type?: ResourceType;
 }
 
+interface RawSharePermissions {
+  permissions?: { initiate_file_upload?: boolean };
+}
+
 interface RawSharedByMeRegular {
   share: {
     id: { opaque_id: string };
     resource_id: { opaque_id: string };
-    grantee: RawUserGrantee | RawGroupGrantee;
+    grantee: RawGrantee;
+    permissions?: RawSharePermissions;
   };
   resource_info: RawResourceInfo;
 }
@@ -47,11 +55,24 @@ interface RawSharedWithMe {
     share: {
       id: { opaque_id: string };
       resource_id: { opaque_id: string };
-      grantee: RawUserGrantee | RawGroupGrantee;
+      grantee: RawGrantee;
       creator: { opaque_id: string };
+      permissions?: RawSharePermissions;
     };
   };
   resource_info: RawResourceInfo;
+}
+
+interface RawUser {
+  id: { opaque_id: string; idp: string };
+  display_name?: string;
+  username?: string;
+  mail?: string;
+}
+
+interface RawGroup {
+  id: { opaque_id: string };
+  group_name?: string;
 }
 
 interface Grantee {
@@ -62,7 +83,7 @@ interface Grantee {
 interface _Share {
   shareDirection: ShareDirection;
   shareType: ShareType;
-  resourceOpaueId: string;
+  resourceOpaqueId: string;
   resourceType: ResourceType;
   name: string;
   path: string;
@@ -89,97 +110,79 @@ interface WithMeRegularShare extends _Share {
 
 export type Share = ByMeRegularShare | ByMePublicShare | WithMeRegularShare;
 
-export async function fetchShares(): Promise<Share[]> {
-  const settings = ServerConnection.makeSettings();
+function granteeOpaqueId(grantee: RawGrantee): string {
+  return grantee.type === 'GRANTEE_TYPE_USER' ? grantee.user_id.opaque_id : grantee.group_id.opaque_id;
+}
 
-  const [byMeResp, withMeResp] = await Promise.all([
-    ServerConnection.makeRequest(settings.baseUrl + 'share/getSharedByMe', {}, settings),
-    ServerConnection.makeRequest(settings.baseUrl + 'share/getSharedWithMe', {}, settings)
+function roleFromPermissions(permissions: RawSharePermissions | undefined): ShareRole {
+  return permissions?.permissions?.initiate_file_upload ? 'EDITOR' : 'VIEWER';
+}
+
+/** The fields every kind of share takes from the resource it shares. */
+function resourceFields(resourceId: string, info: RawResourceInfo): Omit<_Share, 'shareDirection' | 'shareType'> {
+  return {
+    resourceOpaqueId: resourceId,
+    resourceType: info.type ?? 'RESOURCE_TYPE_CONTAINER',
+    name: info.name,
+    path: toApiPath(info.path),
+    rawPath: info.path
+  };
+}
+
+export async function fetchShares(): Promise<Share[]> {
+  const [byMe, withMe] = await Promise.all([
+    requestAPI<{ shares: RawSharedByMeRegular[]; public_shares: RawSharedByMePublic[] }>('share/getSharedByMe'),
+    requestAPI<{ shares: RawSharedWithMe[] }>('share/getSharedWithMe')
   ]);
 
-  if (!byMeResp.ok) {
-    const data = await byMeResp.json();
-    throw new ServerConnection.ResponseError(byMeResp, data.error ?? byMeResp.statusText);
-  }
-  if (!withMeResp.ok) {
-    const data = await withMeResp.json();
-    throw new ServerConnection.ResponseError(withMeResp, data.error ?? withMeResp.statusText);
-  }
-
-  const byMeData = await byMeResp.json();
-  const withMeData = await withMeResp.json();
-
-  const byMeMerged = new Map<string, ByMeRegularShare>();
-  for (const share of byMeData.shares as RawSharedByMeRegular[]) {
-    const resourceId = share.share.resource_id.opaque_id;
-    const sharedWithOpaqueId =
-      share.share.grantee.type === 'GRANTEE_TYPE_USER'
-        ? share.share.grantee.user_id.opaque_id
-        : share.share.grantee.group_id.opaque_id;
-
-    if (!byMeMerged.has(resourceId)) {
-      byMeMerged.set(resourceId, {
+  // One entry per shared resource, listing everyone it is shared with
+  const byMeRegular = new Map<string, ByMeRegularShare>();
+  for (const { share, resource_info } of byMe.shares) {
+    const resourceId = share.resource_id.opaque_id;
+    const grantee = { type: share.grantee.type, opaqueId: granteeOpaqueId(share.grantee) };
+    const existing = byMeRegular.get(resourceId);
+    if (existing) {
+      existing.sharedWith.push(grantee);
+    } else {
+      byMeRegular.set(resourceId, {
         shareDirection: 'BY_ME',
         shareType: 'REGULAR',
-        resourceOpaueId: share.share.resource_id.opaque_id,
-        resourceType: share.resource_info.type ?? 'RESOURCE_TYPE_CONTAINER',
-        name: share.resource_info.name,
-        path: share.resource_info.path.slice('/eos'.length), // TODO: Don't hardcode this prefix
-        rawPath: share.resource_info.path,
-        sharedWith: [
-          {
-            type: share.share.grantee.type,
-            opaqueId: sharedWithOpaqueId
-          }
-        ]
-      });
-    } else {
-      byMeMerged.get(resourceId)?.sharedWith.push({
-        type: share.share.grantee.type,
-        opaqueId: sharedWithOpaqueId
+        ...resourceFields(resourceId, resource_info),
+        sharedWith: [grantee]
       });
     }
   }
 
-  const byMePublicMerged = new Map<string, ByMePublicShare>();
-  for (const share of byMeData.public_shares as RawSharedByMePublic[]) {
-    const resourceId = share.public_share.resource_id.opaque_id;
-    byMePublicMerged.set(resourceId, {
+  const byMePublic = new Map<string, ByMePublicShare>();
+  for (const { public_share, resource_info } of byMe.public_shares) {
+    const resourceId = public_share.resource_id.opaque_id;
+    byMePublic.set(resourceId, {
       shareDirection: 'BY_ME',
       shareType: 'PUBLIC',
-      resourceOpaueId: share.public_share.resource_id.opaque_id,
-      resourceType: share.resource_info.type ?? 'RESOURCE_TYPE_CONTAINER',
-      name: share.resource_info.name,
-      path: share.resource_info.path.slice('/eos'.length), // TODO: Don't hardcode this prefix
-      rawPath: share.resource_info.path
+      ...resourceFields(resourceId, resource_info)
     });
   }
 
-  const withMeMerged = new Map<string, WithMeRegularShare>();
-  for (const share of withMeData.shares as RawSharedWithMe[]) {
-    if (share.received_share.state !== 'SHARE_STATE_ACCEPTED') {
+  const withMeAccepted = new Map<string, WithMeRegularShare>();
+  for (const { received_share, resource_info } of withMe.shares) {
+    if (received_share.state !== 'SHARE_STATE_ACCEPTED') {
       continue; // Skip non-accepted shares
     }
-    const resourceId = share.received_share.share.resource_id.opaque_id;
-    withMeMerged.set(resourceId, {
+    const { share } = received_share;
+    const resourceId = share.resource_id.opaque_id;
+    withMeAccepted.set(resourceId, {
       shareDirection: 'WITH_ME',
       shareType: 'REGULAR',
-      resourceOpaueId: share.received_share.share.resource_id.opaque_id,
-      resourceType: share.resource_info.type ?? 'RESOURCE_TYPE_CONTAINER',
-      name: share.resource_info.name,
-      path: share.resource_info.path.slice('/eos'.length), // TODO: Don't hardcode this prefix
-      rawPath: share.resource_info.path,
-      sharedBy: share.received_share.share.creator.opaque_id,
-      role: roleFromRawPermissions(
-        (share.received_share.share as Record<string, unknown>).permissions as Record<string, unknown> | undefined
-      )
+      ...resourceFields(resourceId, resource_info),
+      sharedBy: share.creator.opaque_id,
+      role: roleFromPermissions(share.permissions)
     });
   }
 
   // Keep only read-only shares
-  const readOnlyWithMe = [...withMeMerged.values()].filter(s => s.role === 'VIEWER');
+  const readOnlyWithMe = [...withMeAccepted.values()].filter(s => s.role === 'VIEWER');
 
-  return [...byMeMerged.values(), ...byMePublicMerged.values(), ...readOnlyWithMe];
+  return [...byMeRegular.values(), ...byMePublic.values(), ...readOnlyWithMe];
 }
 
 export interface ShareGranteeDetail {
@@ -201,68 +204,22 @@ export interface GroupSearchResult {
   displayName: string;
 }
 
-function roleFromRawPermissions(permissions: Record<string, unknown> | undefined): ShareRole {
-  const perms = (permissions as Record<string, Record<string, unknown>> | undefined)?.permissions;
-  return perms?.initiate_file_upload ? 'EDITOR' : 'VIEWER';
-}
-
 export async function fetchSharesForResource(rawPath: string): Promise<ShareGranteeDetail[]> {
-  const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'share/getSharedByResource?' + new URLSearchParams({ path: rawPath });
-  const resp = await ServerConnection.makeRequest(url, {}, settings);
-
-  if (!resp.ok) {
-    const data = await resp.json();
-    throw new ServerConnection.ResponseError(resp, data.error ?? resp.statusText);
-  }
-
-  const data = await resp.json();
-  const results: ShareGranteeDetail[] = [];
-
-  for (const item of data.shares as RawSharedByMeRegular[]) {
-    const grantee = item.share.grantee;
-    const opaqueId =
-      grantee.type === 'GRANTEE_TYPE_USER'
-        ? grantee.user_id.opaque_id
-        : grantee.group_id.opaque_id;
-    results.push({
-      shareId: item.share.id.opaque_id,
-      type: grantee.type,
-      opaqueId,
-      role: roleFromRawPermissions((item.share as Record<string, unknown>).permissions as Record<string, unknown> | undefined)
-    });
-  }
-
-  return results;
+  const data = await requestAPI<{ shares: RawSharedByMeRegular[] }>('share/getSharedByResource', {}, { path: rawPath });
+  return data.shares.map(({ share }) => ({
+    shareId: share.id.opaque_id,
+    type: share.grantee.type,
+    opaqueId: granteeOpaqueId(share.grantee),
+    role: roleFromPermissions(share.permissions)
+  }));
 }
 
 export async function removeShare(shareId: string): Promise<void> {
-  const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'share/share?' + new URLSearchParams({ share_id: shareId });
-  const resp = await ServerConnection.makeRequest(url, { method: 'DELETE' }, settings);
-
-  if (!resp.ok) {
-    const data = await resp.json();
-    throw new ServerConnection.ResponseError(resp, data.error ?? resp.statusText);
-  }
+  await requestAPI('share/share', { method: 'DELETE' }, { share_id: shareId });
 }
 
 export async function updateShareRole(shareId: string, role: ShareRole): Promise<void> {
-  const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'share/share?' + new URLSearchParams({ share_id: shareId });
-  const resp = await ServerConnection.makeRequest(
-    url,
-    {
-      method: 'PUT',
-      body: JSON.stringify({ role })
-    },
-    settings
-  );
-
-  if (!resp.ok) {
-    const data = await resp.json();
-    throw new ServerConnection.ResponseError(resp, data.error ?? resp.statusText);
-  }
+  await requestAPI('share/share', { method: 'PUT', body: JSON.stringify({ role }) }, { share_id: shareId });
 }
 
 export async function createShare(
@@ -272,60 +229,29 @@ export async function createShare(
   role: ShareRole,
   granteeType: GranteeType
 ): Promise<void> {
-  const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'share/share?' + new URLSearchParams({ path: rawPath });
-  const resp = await ServerConnection.makeRequest(
-    url,
-    {
-      method: 'POST',
-      body: JSON.stringify({
-        opaque_id: opaqueId,
-        idp,
-        role,
-        grantee_type: granteeType === 'GRANTEE_TYPE_USER' ? 'USER' : 'GROUP'
-      })
-    },
-    settings
-  );
-
-  if (!resp.ok) {
-    const data = await resp.json();
-    throw new ServerConnection.ResponseError(resp, data.error ?? resp.statusText);
-  }
+  const body = JSON.stringify({
+    opaque_id: opaqueId,
+    idp,
+    role,
+    grantee_type: granteeType === 'GRANTEE_TYPE_USER' ? 'USER' : 'GROUP'
+  });
+  await requestAPI('share/share', { method: 'POST', body }, { path: rawPath });
 }
 
 export async function findUsers(query: string, signal?: AbortSignal): Promise<UserSearchResult[]> {
-  const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'find/users?' + new URLSearchParams({ search: query });
-  const resp = await ServerConnection.makeRequest(url, { signal }, settings);
-
-  if (!resp.ok) {
-    const data = await resp.json();
-    throw new ServerConnection.ResponseError(resp, data.error ?? resp.statusText);
-  }
-
-  const data = await resp.json();
-  return (data.items as Array<Record<string, unknown>>).map((u) => ({
-    opaqueId: (u.id as Record<string, string>).opaque_id,
-    idp: (u.id as Record<string, string>).idp,
-    displayName: (u.display_name as string) || (u.username as string) || '',
-    mail: (u.mail as string) || ''
+  const data = await requestAPI<{ items: RawUser[] }>('find/users', { signal }, { search: query });
+  return data.items.map(u => ({
+    opaqueId: u.id.opaque_id,
+    idp: u.id.idp,
+    displayName: u.display_name || u.username || '',
+    mail: u.mail || ''
   }));
 }
 
 export async function findGroups(query: string, signal?: AbortSignal): Promise<GroupSearchResult[]> {
-  const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'find/groups?' + new URLSearchParams({ search: query });
-  const resp = await ServerConnection.makeRequest(url, { signal }, settings);
-
-  if (!resp.ok) {
-    const data = await resp.json();
-    throw new ServerConnection.ResponseError(resp, data.error ?? resp.statusText);
-  }
-
-  const data = await resp.json();
-  return (data.items as Array<Record<string, unknown>>).map((g) => ({
-    opaqueId: (g.id as Record<string, string>).opaque_id,
-    displayName: (g.group_name as string) || (g.id as Record<string, string>).opaque_id
+  const data = await requestAPI<{ items: RawGroup[] }>('find/groups', { signal }, { search: query });
+  return data.items.map(g => ({
+    opaqueId: g.id.opaque_id,
+    displayName: g.group_name || g.id.opaque_id
   }));
 }
