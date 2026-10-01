@@ -33,7 +33,7 @@ class CS3FileContentsManager(CS3FileManagerMixin):
     # Different implementation
     @default("root_dir")
     def _default_root_dir(self):
-        return self.get_user_path()
+        return self.root_path
 
     # We cannot validate before starting if it's a virtual filesystem.
     @validate("root_dir")
@@ -46,14 +46,14 @@ class CS3FileContentsManager(CS3FileManagerMixin):
         return proposal.value
 
     # Upstream uses os.access; caching is left to the TTL stat cache under
-    # self.access, which - unlike a per-path dict - expires and is invalidated
+    # storage.access, which - unlike a per-path dict - expires and is invalidated
     # by mutations.
     def is_writable(self, path):
         """Does the API style path correspond to a writable directory or file?"""
         path = path.strip("/")
         os_path = self._get_os_path(path=path)
         try:
-            return self.access(os_path, os.W_OK)
+            return self.storage.access(os_path, os.W_OK)
         except OSError:
             self.log.error("Failed to check write permissions on %s", os_path)
             return False
@@ -82,7 +82,7 @@ class CS3FileContentsManager(CS3FileManagerMixin):
             raise web.HTTPError(400, f"Cannot delete file or directory {os_path!r}")
         if not await self.exists(path):
             raise web.HTTPError(404, "File or directory does not exist: %s" % os_path)
-        await run_sync(self._delete, os_path, path, self.is_dir(os_path))
+        await run_sync(self._delete, os_path, path, self.storage.is_dir(os_path))
 
     async def _dir_model(self, path, content=True):
         """Build a model for a directory
@@ -93,7 +93,7 @@ class CS3FileContentsManager(CS3FileManagerMixin):
 
         four_o_four = "directory does not exist: %r" % path
         ## Replaced os.path.isdir
-        if not self.is_dir(os_path):
+        if not self.storage.is_dir(os_path):
             raise web.HTTPError(404, four_o_four)
         ## replaced is_hidden with implementation above
         elif not self.allow_hidden and is_hidden(os_path, self.root_dir):
@@ -107,7 +107,7 @@ class CS3FileContentsManager(CS3FileManagerMixin):
             model["content"] = contents = []
             os_dir = self._get_os_path(path)
             ## replaced os.listdir
-            dir_contents = await run_sync(self.list_dir, os_dir)
+            dir_contents = await run_sync(self.storage.list_dir, os_dir)
 
             for dir_name, stat_info in dir_contents:
                 try:
@@ -235,7 +235,7 @@ class CS3FileContentsManager(CS3FileManagerMixin):
     # Upstream uses subprocess to call du command to get directory size
     # and upstream is significantly more complex so no point in pushing this upstream
     async def _get_dir_size(self, path: str = ".") -> str:
-        return await run_sync(self.get_dir_size, str(path))  # type:ignore[return-value]
+        return await run_sync(self.storage.get_dir_size, str(path))  # type:ignore[return-value]
 
 class CS3HybridFileManager(CS3HybridFileManagerMixin):
     """A sync contents manager: CS3 for all mutations, FUSE as a metadata fast path.
@@ -252,7 +252,7 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         try:
             ## fall back to CS3 for files not yet visible in the mount
             if not os.path.exists(os_path):
-                return self.access(os_path, os.W_OK)
+                return self.storage.access(os_path, os.W_OK)
             return os.access(os_path, os.W_OK)
         except OSError:
             self.log.error("Failed to check write permissions on %s", os_path)
@@ -362,7 +362,7 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         if not self.hybrid_exists(os_path):
             with self.perm_to_403():
                 ## replaced os.mkdir with CS3 mkdir
-                self.mkdir(os_path)
+                self.storage.mkdir(os_path)
         elif not self.hybrid_isdir(os_path):
             raise web.HTTPError(400, "Not a directory: %s" % (os_path))
         else:
@@ -457,10 +457,10 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
                 ## could never apply. Files keep going through CS3, where
                 ## the lock id is what permits the move.
                 shutil.move(old_os_path, new_os_path)
-                self.invalidate_stat(old_os_path, new_os_path)
+                self.storage.invalidate_stat(old_os_path, new_os_path)
             else:
                 ## replaced shutil.move with CS3 rename (carries our lock id)
-                self.move(old_os_path, new_os_path)
+                self.storage.rename(old_os_path, new_os_path)
 
     def delete_file(self, path):
         """Delete file at path."""
@@ -496,7 +496,7 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
         destination through lock_after_create with nothing to release it, so
         copies came back read-only until lock_expiration (300s) elapsed.
 
-        copyfile_sync streams it in the storage instead, and leaves no lock: a
+        storage.copyfile streams it in the storage instead, and leaves no lock: a
         copy destination is a new file, not an open document. Writes still
         respect locks - the streamed write carries no lock id, so reva refuses
         it if something else holds the destination.
@@ -545,11 +545,11 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
                 ## folder copies already go through the mount (copytree);
                 ## a single file has no reason to cost RPCs either
                 shutil.copyfile(src_os_path, dest_os_path)
-                self.invalidate_stat(dest_os_path)
+                self.storage.invalidate_stat(dest_os_path)
             else:
                 ## source created through CS3 and not in the mount yet;
-                ## copyfile_sync notes the change itself
-                self.copyfile_sync(src_os_path, dest_os_path)
+                ## storage.copyfile notes the change itself
+                self.storage.copyfile(src_os_path, dest_os_path)
 
         model = self.get(to_path, content=False)
         self.emit(data={"action": "copy", "path": to_path, "source_path": from_path})
@@ -558,4 +558,4 @@ class CS3HybridFileManager(CS3HybridFileManagerMixin):
     # Upstream shells out to `du -s` against the mount, which is slow on EOS.
     # One CS3 stat carries the tree size in its opaque metadata instead.
     def _get_dir_size(self, path: str = ".") -> str:
-        return self.get_dir_size(str(path))  # type:ignore[return-value]
+        return self.storage.get_dir_size(str(path))  # type:ignore[return-value]

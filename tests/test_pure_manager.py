@@ -158,7 +158,7 @@ def test_chunked_upload_assembles_file(manager, patch_cs3):
 
 def test_checkpoints_share_the_managers_client(patch_cs3, monkeypatch):
     """Checkpoints used to build a second CS3Client (and Auth, and stat cache)."""
-    import cs3_jupyter.cs3mixin as cs3mixin_module
+    import cs3_jupyter.cs3vfs.session as session_module
     from types import SimpleNamespace
 
     clients = []
@@ -167,11 +167,11 @@ def test_checkpoints_share_the_managers_client(patch_cs3, monkeypatch):
         clients.append(SimpleNamespace(file=patch_cs3))
         return clients[-1]
 
-    monkeypatch.setattr(cs3mixin_module, "CS3Client", client)
+    monkeypatch.setattr(session_module, "CS3Client", client)
     patch_cs3.files[ROOT] = DIR
     patch_cs3.put(f"{ROOT}/f.txt", b"x")
     manager = make_manager(CS3LargeFileManager, patch_cs3, root_path=ROOT)
-    manager.client.checkpoint = SimpleNamespace(
+    manager.session.client.checkpoint = SimpleNamespace(
         list_file_versions=lambda token, resource: [SimpleNamespace(key="v1", mtime=5)]
     )
 
@@ -184,7 +184,7 @@ def test_checkpoints_share_the_managers_client(patch_cs3, monkeypatch):
 def test_write_rejected_by_a_lock_race_is_423_not_500(manager, patch_cs3, monkeypatch):
     """Locked between our lock check and the upload: the storage refuses the write."""
     patch_cs3.put(f"{ROOT}/f.txt", b"theirs", lock={"app_name": "collabora", "lock_id": "x"})
-    monkeypatch.setattr(manager, "acquire_or_refresh_lock", lambda path: "held")
+    monkeypatch.setattr(manager.locks, "acquire_or_refresh_lock", lambda path: "held")
     with pytest.raises(HTTPError) as exc:
         asyncio.run(manager.save({"type": "file", "content": "mine", "format": "text"}, "f.txt"))
     assert exc.value.status_code == 423

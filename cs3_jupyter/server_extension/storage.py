@@ -11,7 +11,7 @@ class GetQuotaHandler(CS3HandlerBase):
     @web.authenticated
     async def get(self):
         path = self.get_query_argument("path", default="")
-        quota = await self.call(self.cs3.get_quota, path)
+        quota = await self.call(self.cs3.spaces.get_quota, path)
         self.write({"quota": proto_dict(quota)})
 
 
@@ -21,7 +21,7 @@ class GetSpaceHandler(CS3HandlerBase):
     """
     @web.authenticated
     async def get(self):
-        spaces = await self.call(self.cs3.list_spaces)
+        spaces = await self.call(self.cs3.spaces.list_spaces)
         self.write({"spaces": proto_dicts(spaces)})
 
 

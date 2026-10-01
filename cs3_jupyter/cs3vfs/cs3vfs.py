@@ -1,27 +1,28 @@
 """
-CS3 Operating System Interface
+CS3 storage: file system operations over the CS3 APIs.
 
-This module provides a CS3-based implementation of common file system operations
-to replace standard library functions like os, shutil, etc. with CS3 storage operations.
+Replaces what the contents managers would otherwise do with os and shutil.
 
 Authors: Rasmus Welander.
 Emails: rasmus.oscar.welander@cern.ch.
 """
 
+from __future__ import annotations
+
+import json
 import os
 import stat
 import time
-
-from .cs3file import CS3File
-from .statuscodehandler import translate_cs3_error
-from .utils import resource_from_path, retry_on_auth_failure, StatResult
-from cs3client.cs3resource import Resource
-from cs3client.exceptions import NotFoundException
 from contextlib import contextmanager
 from typing import Generator, List, Optional, Tuple
 
-
 import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
+from cs3client.exceptions import NotFoundException
+
+from .cs3file import CS3File
+from .session import CS3Service, CS3Session
+from .statuscodehandler import translate_cs3_error
+from .utils import resource_from_path, retry_on_auth_failure, StatResult
 
 # How long a Stat result stays usable. Long enough that the several lookups
 # behind one request collapse into one RPC, short enough that a change made
@@ -33,14 +34,77 @@ STAT_TTL_SECONDS = 2.0
 # before assuming something else keeps the two apart.
 MOUNT_LAG_TIMEOUT_SECONDS = 300.0
 
+_MISS = object()
 
-class CS3VirtualFileSystem:
+
+class StatCache:
+    """Recent Stat results by path; a cached None means "does not exist"."""
+
+    def __init__(self, ttl: float = STAT_TTL_SECONDS):
+        self.ttl = ttl
+        self._entries: dict[str, tuple[object, float]] = {}
+
+    def get(self, path: str):
+        """The cached result, or _MISS if there is none still fresh."""
+        hit = self._entries.get(path)
+        if hit is not None and time.monotonic() - hit[1] < self.ttl:
+            return hit[0]
+        return _MISS
+
+    def put(self, path: str, info) -> None:
+        self._entries[path] = (info, time.monotonic())
+
+    def invalidate(self, *paths: str) -> None:
+        for path in paths:
+            self._entries.pop(path, None)
+
+
+class PendingChanges:
+    """Paths changed through CS3 that the FUSE mount may not show yet.
+
+    The mount cannot see a reva-side change until its own cache expires; the
+    hybrid manager asks which paths in a directory are still pending to
+    decide when a listing must come from CS3 instead.
+    """
+
+    def __init__(self, timeout: float = MOUNT_LAG_TIMEOUT_SECONDS):
+        self.timeout = timeout
+        self._since: dict[str, float] = {}
+
+    def note(self, *paths: str) -> None:
+        now = time.monotonic()
+        self._expire(now)
+        for path in paths:
+            self._since[path] = now
+
+    def in_dir(self, os_dir: str) -> List[str]:
+        """Pending paths directly in os_dir; ones pending too long are given up on."""
+        self._expire(time.monotonic())
+        return [p for p in self._since if os.path.dirname(p) == os_dir]
+
+    def settle(self, path: str) -> None:
+        """The mount has caught up with path."""
+        self._since.pop(path, None)
+
+    def _expire(self, now: float) -> None:
+        cutoff = now - self.timeout
+        self._since = {p: t for p, t in self._since.items() if t > cutoff}
+
+
+class CS3Storage(CS3Service):
     """
     CS3-based file system operations that can replace standard library functions.
 
-    This class provides implementations for file operations using CS3 storage
-    instead of the local file system.
+    Writes, removals and renames carry our lock (holder and lock id), which is
+    what lets reva accept them on a file we hold.
     """
+
+    def __init__(self, session: CS3Session, lock_holder: str, lock_value: str):
+        super().__init__(session)
+        self.lock_holder = lock_holder
+        self.lock_value = lock_value
+        self.stat_cache = StatCache()
+        self.pending = PendingChanges()
 
     def _stat_cached(self, path: str):
         """Stat `path`, reusing a recent result. None means "does not exist".
@@ -53,46 +117,31 @@ class CS3VirtualFileSystem:
         other failure stays uncached so it remains retryable (an expired token
         must still be refreshed and the call repeated by retry_on_auth_failure).
         """
-        cache = self._stat_cache
-        now = time.monotonic()
-        hit = cache.get(path)
-        if hit is not None and now - hit[1] < STAT_TTL_SECONDS:
-            return hit[0]
-
+        info = self.stat_cache.get(path)
+        if info is not _MISS:
+            return info
         try:
             info = self.client.file.stat(self.auth.get_token(), resource_from_path(path))
         except NotFoundException:
-            cache[path] = (None, now)
-            return None
-        cache[path] = (info, now)
+            info = None
+        self.stat_cache.put(path, info)
         return info
 
     def invalidate_stat(self, *paths: str) -> None:
         """Drop cached Stat results, e.g. after a mutation performed on the mount."""
-        for path in paths:
-            self._stat_cache.pop(path, None)
+        self.stat_cache.invalidate(*paths)
 
     def note_cs3_change(self, *paths: str) -> None:
         """Record a CS3-side mutation: drop the cached stats and mark pending.
 
-        The FUSE mount cannot see a reva-side change until its own cache
-        expires, so a listing taken from the mount would keep showing the old
-        state; mount_lags_in consults the pending set to decide when a listing
-        must come from CS3 instead. Every CS3 mutation in this class calls
-        this; mount-side mutations call invalidate_stat, since there is
-        nothing for the mount to catch up on.
+        Every CS3 mutation in this class calls this; mount-side mutations call
+        invalidate_stat, since there is nothing for the mount to catch up on.
         """
-        self.invalidate_stat(*paths)
-        now = time.monotonic()
-        cutoff = now - MOUNT_LAG_TIMEOUT_SECONDS
-        self._pending_paths = {
-            k: t for k, t in self._pending_paths.items() if t > cutoff
-        }
-        for path in paths:
-            self._pending_paths[path] = now
+        self.stat_cache.invalidate(*paths)
+        self.pending.note(*paths)
 
     @contextmanager
-    def cs3open(self, path: str, mode: str = 'r', encoding: Optional[str] = None, **kwargs) -> Generator['CS3File', None, None]:
+    def open(self, path: str, mode: str = 'r', encoding: Optional[str] = None, **kwargs) -> Generator['CS3File', None, None]:
         """Context manager for opening CS3 files."""
         cs3_file = CS3File(self, path, mode, encoding)
         cs3_file._init()
@@ -102,7 +151,7 @@ class CS3VirtualFileSystem:
             cs3_file.close()
 
     @retry_on_auth_failure
-    def vfs_exists(self, path: str) -> bool:
+    def exists(self, path: str) -> bool:
         """Check if path exists."""
         try:
             ## same Stat as is_file/is_dir/lstat/access - served once per path
@@ -133,9 +182,6 @@ class CS3VirtualFileSystem:
             return result.type == cs3spr.ResourceType.RESOURCE_TYPE_CONTAINER
         except Exception:
             return False
-
-    def abs_path(self, path: str) -> str:
-        return path
 
     @retry_on_auth_failure
     def list_dir(self, path: str) -> List[Tuple[str, 'StatResult']]:
@@ -173,7 +219,6 @@ class CS3VirtualFileSystem:
         finally:
             self.note_cs3_change(path)
 
-    # Alias for rmdir, because jupyter uses it
     def rmdir(self, path: str) -> None:
         """Remove directory (one call for the whole subtree)."""
         return self.unlink(path, with_lock=False)
@@ -197,8 +242,8 @@ class CS3VirtualFileSystem:
             self.note_cs3_change(path)
 
     @retry_on_auth_failure
-    def vfs_touch(self, path: str) -> None:
-        """Create an empty file with CS3."""
+    def touch(self, path: str) -> None:
+        """Create an empty file."""
         try:
             resource = resource_from_path(path)
             self.client.file.touch_file(
@@ -210,12 +255,8 @@ class CS3VirtualFileSystem:
         finally:
             self.note_cs3_change(path)
 
-    def move(self, src: str, dst: str) -> None:
-        """Move file or directory."""
-        self.vfs_rename(src, dst)
-
     @retry_on_auth_failure
-    def vfs_rename(self, src: str, dst: str) -> None:
+    def rename(self, src: str, dst: str) -> None:
         """Rename file or directory."""
         try:
             src_resource = resource_from_path(src)
@@ -252,8 +293,6 @@ class CS3VirtualFileSystem:
                 ## missing path surfacing as FileNotFoundError, not "no access"
                 raise NotFoundException("not found")
             return True
-        except PermissionError:
-            return False
         except Exception as e:
             translate_cs3_error(e)
 
@@ -314,7 +353,6 @@ class CS3VirtualFileSystem:
                 # Look for EOS metadata with tree_size
                 for key, value in result.opaque.map.items():
                     if key == "eos" and value.decoder == "json":
-                        import json
                         try:
                             eos_data = json.loads(value.value.decode('utf-8'))
                             if 'tree_size' in eos_data:
@@ -329,60 +367,41 @@ class CS3VirtualFileSystem:
             self.log.warning(f"Error calculating directory size for {path}: {e}")
             return 0
 
-    async def copyfile(self, src: str, dst: str) -> None:
-        """Copy file contents using streaming to avoid loading entire file in memory."""
-        self.copyfile_sync(src, dst)
-
     @retry_on_auth_failure
-    def copyfile_sync(self, src: str, dst: str) -> None:
-        """Copy file contents using streaming to avoid loading entire file in memory."""
-        src_resource = resource_from_path(src)
-        dst_resource = resource_from_path(dst)
+    def copyfile(self, src: str, dst: str) -> None:
+        """Copy a file in the storage, streamed rather than loaded into memory.
 
+        The write carries no lock: a copy destination is a new file, and if
+        something else holds it the storage refuses the write.
+        """
         try:
             # Get the source file size first
             info = self._stat_cached(src)
             if info is None:
                 raise NotFoundException("not found")
-
-            file_size = info.size
-
-            # Get the content generator
             content_generator = self.client.file.read_file(
                 self.auth.get_token(),
-                src_resource
+                resource_from_path(src)
             )
-
-            # Stream write
-            self._write_file_streamed(dst_resource, content_generator, file_size)
-
+            self.client.file.write_file(
+                self.auth.get_token(),
+                resource_from_path(dst),
+                content_generator,  # Pass generator directly
+                info.size
+            )
         except Exception as e:
             translate_cs3_error(e)
         finally:
             self.note_cs3_change(dst)
 
-    def _write_file_streamed(self, resource: Resource, content_generator: Generator[bytes, None, None], size: int) -> None:
-        """Write a file using streaming to avoid loading entire content in memory."""
-        try:
-            self.client.file.write_file(
-                self.auth.get_token(),
-                resource,
-                content_generator,  # Pass generator directly
-                size
-            )
-        except Exception as e:
-            translate_cs3_error(e)
-
-    @retry_on_auth_failure
-    async def copy_tree(self, src: str, dst: str) -> None:
+    def copy_tree(self, src: str, dst: str) -> None:
         """Copy directory tree."""
         self.mkdir(dst)
-        dir_contents = self.list_dir(src)
-        for dir_name, _ in dir_contents:
+        for dir_name, _ in self.list_dir(src):
             src_path = os.path.join(src, dir_name)
             dst_path = os.path.join(dst, dir_name)
 
             if self.is_dir(src_path):
-                await self.copy_tree(src_path, dst_path)
+                self.copy_tree(src_path, dst_path)
             else:
-                await self.copyfile(src_path, dst_path)
+                self.copyfile(src_path, dst_path)

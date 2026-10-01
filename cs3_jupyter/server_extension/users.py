@@ -16,7 +16,7 @@ class FindUsersHandler(CS3HandlerBase):
     async def get(self):
         search = self.get_query_argument("search", default="")
         user_type = self.get_query_argument("type", default=None)
-        users = await self.call(self.cs3.find_users, search, user_type=user_type)
+        users = await self.call(self.cs3.users.find_users, search, user_type=user_type)
         self.write({"search": search, "items": proto_dicts(users)})
 
 
@@ -29,7 +29,7 @@ class FindGroupsHandler(CS3HandlerBase):
     async def get(self):
         search = self.get_query_argument("search", default="")
         # We don't use GROUP_TYPE_FEDERATED, all groups are regular groups.
-        groups = await self.call(self.cs3.find_groups, search, "GROUP_TYPE_REGULAR")
+        groups = await self.call(self.cs3.groups.find_groups, search, "GROUP_TYPE_REGULAR")
         self.write({"search": search, "items": proto_dicts(groups)})
 
 

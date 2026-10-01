@@ -56,7 +56,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
 
         os_path = self._get_os_path(path)
         ## replaced os.path.isdir
-        if self.is_dir(os_path):
+        if self.storage.is_dir(os_path):
             if type not in (None, "directory"):
                 raise web.HTTPError(
                     400,
@@ -83,12 +83,12 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
         ## replaced os.path.exists (now async)
         ## os_path is already an OS path: self.exists() takes an API path and
         ## would re-prefix it with root_dir, so it can never match.
-        if not await run_sync(self.vfs_exists, os_path):
+        if not await run_sync(self.storage.exists, os_path):
             with self.perm_to_403():
                 # replaced os.mkdir
-                await run_sync(self.mkdir, os_path)
+                await run_sync(self.storage.mkdir, os_path)
         ## replaced os.path.isdir
-        elif not self.is_dir(os_path):
+        elif not self.storage.is_dir(os_path):
             raise web.HTTPError(400, "Not a directory: %s" % (os_path))
         else:
             self.log.debug("Directory %r already exists", os_path)
@@ -112,7 +112,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
         ## replaced os.path.exists (now async) and samefile
         ## new_os_path is an OS path - see _save_directory, self.exists() would
         ## re-prefix it and silently never fire, pushing the clash to the storage.
-        if await run_sync(self.vfs_exists, new_os_path) and not naive_same_file(
+        if await run_sync(self.storage.exists, new_os_path) and not naive_same_file(
             old_os_path, new_os_path
         ):
             raise web.HTTPError(409, "File already exists: %s" % new_path)
@@ -122,7 +122,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
 
         with rename_errors_to_http(old_path), self.perm_to_403():
             ## replaced shutil.move
-            await run_sync(self.move, old_os_path, new_os_path)
+            await run_sync(self.storage.rename, old_os_path, new_os_path)
 
     async def _copy_dir(
         self, from_path: str, to_path_original: str, to_name: str, to_path: str
@@ -135,7 +135,7 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
             os_from_path = self._get_os_path(from_path.strip("/"))
             os_to_path = f'{self._get_os_path(to_path_original.strip("/"))}/{to_name}'
             ## Replaced shutil.copytree with cs3_fs copy_tree
-            await self.copy_tree(os_from_path, os_to_path)
+            await run_sync(self.storage.copy_tree, os_from_path, os_to_path)
             model = await self.get(to_path, content=False)
         except OSError as err:
             self.log.error(f"OSError in _copy_dir: {err}")
@@ -151,14 +151,14 @@ class UpstreamFileManager(AsyncFileContentsManager, FileContentsManager):
         path = path.strip("/")
         os_path = self._get_os_path(path=path)
         ## replaced os.path.isdir
-        return self.is_dir(os_path)
+        return self.storage.is_dir(os_path)
 
     async def file_exists(self, path):
         """Does a file exist at the given path"""
         path = path.strip("/")
         os_path = self._get_os_path(path)
         ## replaced os.path.isfile
-        return self.is_file(os_path)
+        return self.storage.is_file(os_path)
 
 
     # Function replaced - upstream uses jupyter.core.paths.exists which uses os.path.exists

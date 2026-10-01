@@ -16,7 +16,7 @@ from cs3client.exceptions import (
     UnknownException,
 )
 
-import cs3_jupyter.cs3mixin as cs3mixin_module
+import cs3_jupyter.cs3vfs.session as session_module
 
 DIR = object()  # sentinel value marking a directory entry
 
@@ -256,13 +256,13 @@ def fake_cs3():
 
 @pytest.fixture
 def patch_cs3(monkeypatch, fake_cs3):
-    """Make CS3Mixin subclasses instantiable offline, backed by fake_cs3."""
+    """Make CS3 sessions (so CS3Mixin subclasses) work offline, backed by fake_cs3."""
     monkeypatch.setattr(
-        cs3mixin_module,
+        session_module,
         "CS3Client",
         lambda config, name, log: SimpleNamespace(file=fake_cs3, checkpoint=FakeVersions()),
     )
-    monkeypatch.setattr(cs3mixin_module, "Auth", FakeAuth)
+    monkeypatch.setattr(session_module, "Auth", FakeAuth)
     return fake_cs3
 
 

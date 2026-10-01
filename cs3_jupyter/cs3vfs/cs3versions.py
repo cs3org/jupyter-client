@@ -1,18 +1,19 @@
 """
-CS3FileVersions provides methods for listing
+CS3Versions provides methods for listing
 and restoring file versions in a CS3 storage system.
 
 Authors: Rasmus Welander.
 Emails: rasmus.oscar.welander@cern.ch.
 """
 
+from .session import CS3Service
 from .statuscodehandler import translate_cs3_error
 from .utils import resource_from_path, retry_on_auth_failure
 from typing import Generator
 
-class CS3FileVersions:
+class CS3Versions(CS3Service):
     """
-    CS3FileVersions provides methods for listing
+    CS3Versions provides methods for listing
     and restoring file versions in a CS3 storage system.
     """
     @retry_on_auth_failure

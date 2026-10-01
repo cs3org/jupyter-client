@@ -1,27 +1,22 @@
 from __future__ import annotations
 
-import jwt
-import os
 from configparser import ConfigParser
+from functools import cached_property
 from typing import Any
 
-from cs3client.auth import Auth
-from cs3client.cs3client import CS3Client
 from traitlets import Bool, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
 
+from .cs3vfs.session import CS3Session
 
-from .cs3vfs.cs3versions import CS3FileVersions
-from .cs3vfs.cs3vfs import CS3VirtualFileSystem
-from .cs3vfs.cs3sharing import CS3Sharing
-from .cs3vfs.cs3spaces import CS3Spaces
-from .cs3vfs.cs3groups import CS3Groups
-from .cs3vfs.cs3users import CS3Users
-from .cs3vfs.cs3lock import CS3Lock
-from .documentlocks import DocumentLocks
 
-class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, CS3Lock, LoggingConfigurable):
-    """Owns the shared CS3Client/Auth and persistent service instances."""
+class CS3Mixin(LoggingConfigurable):
+    """The CS3 configuration, and the session built from it.
+
+    Both contents managers and the server extension's client inherit these
+    traits, so one config section (c.CS3Mixin.*) configures them all. The
+    services each needs are built on the session by the subclasses.
+    """
 
     host = Unicode(config=True, help="CS3 host address")
     tus_enabled = Bool(default_value=False, config=True, help="Enable TUS protocol")
@@ -63,21 +58,17 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
     lock_by_setting_attr = Bool(default_value=False, config=True, help="Fall back to advisory xattr locks when the storage does not implement locking")
     client_id = Unicode(default_value="", config=True, help="CS3 client ID (can be set in config)")
 
-
     def __init__(self, **kwargs: Any):
-        self.cs3_token = ""
-        self._stat_cache: dict[str, tuple[Any, float]] = {}
-        self._pending_paths: dict[str, float] = {}  # changed via CS3, mount may lag
         super().__init__(**kwargs)
-        self._read_token_file()
-        self._config = self._create_cs3_config()
-        self.client = CS3Client(self._config, "cs3client", self.log)
-        self.auth = Auth(self.client)
-        self.auth.set_client_id(self.client_id)
-        self.auth.set_client_secret(self.cs3_token)
-        # Locks of documents open in the frontend, driven by the /lock endpoint.
-        self.document_locks = DocumentLocks(self, self.lock_expiration, self.log)
-        self.log.debug(f"CS3ClientMixinBase initialized with path: {self.root_path}")
+        _ = self.session  # connect now, not on the first request
+        self.log.debug(f"CS3 session initialized with path: {self.root_path}")
+
+    # A property rather than built in __init__: upstream validates config
+    # (preferred_dir -> dir_exists) while traitlets loads it, before __init__
+    # gets past super().__init__().
+    @cached_property
+    def session(self) -> CS3Session:
+        return CS3Session(self._create_cs3_config(), self.token_path, self.client_id, self.log)
 
     @property
     def lock_holder(self) -> str:
@@ -90,24 +81,6 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
         if self.lock_holder_suffix_client_id and self.client_id:
             return f"{self.lock_app_name}-{self.client_id}"
         return self.lock_app_name
-
-    def get_user_path(self) -> str:
-        return self.root_path
-
-    def _read_token_file(self) -> None:
-        try:
-            if os.path.exists(self.token_path):
-                with open(self.token_path, "r") as f:
-                    self.cs3_token = f.read().strip()
-            else:
-                self.log.warning(f"Token file not found: {self.token_path}")
-        except Exception as e:
-            self.log.error(f"Failed to read token file {self.token_path}: {e}")
-
-    def _refresh_auth(self) -> None:
-        """Reload token/secret from disk and update the shared Auth object."""
-        self._read_token_file()
-        self.auth.set_client_secret(self.cs3_token)
 
     def _create_cs3_config(self) -> ConfigParser:
         cs3config = ConfigParser()
@@ -123,19 +96,3 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
         cs3config.set("cs3client", "lock_by_setting_attr", str(self.lock_by_setting_attr).lower())
         cs3config.set("cs3client", "lock_expiration", str(self.lock_expiration))
         return cs3config
-
-    def _decode_token(self) -> dict:
-        _, token = self.auth.get_token()
-        return jwt.decode(
-            jwt=token,
-            algorithms=["HS256"],
-            options={"verify_signature": False},
-        )
-
-    @property
-    def user_idp(self) -> str:
-        return self._decode_token()["user"]["id"]["idp"]
-
-    @property
-    def user_opaque_id(self) -> str:
-        return self._decode_token()["user"]["id"]["opaque_id"]

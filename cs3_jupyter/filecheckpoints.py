@@ -25,7 +25,7 @@ class CS3FileCheckpoints(AsyncCheckpoints):
     async def create_checkpoint(self, contents_mgr, path):
         """Create a checkpoint."""
         os_path = contents_mgr._get_os_path(path)
-        versions = contents_mgr.list_file_versions(os_path)
+        versions = contents_mgr.versions.list_file_versions(os_path)
         if versions:
             return self._checkpoint_model(max(versions, key=lambda v: v.mtime))
         # Return a mock checkpoint if no versions exist, otherwise jupyter won't open the file.
@@ -40,7 +40,7 @@ class CS3FileCheckpoints(AsyncCheckpoints):
             return None
         os_path = contents_mgr._get_os_path(path)
         try:
-            contents_mgr.restore_file_version(os_path, checkpoint_id)
+            contents_mgr.versions.restore_file_version(os_path, checkpoint_id)
         except FileLockedError as e:
             raise HTTPError(423, f"{path} is locked") from e
         return None
@@ -61,11 +61,11 @@ class CS3FileCheckpoints(AsyncCheckpoints):
         contents_mgr = self.parent
         os_path = contents_mgr._get_os_path(path)
         try:
-            contents_mgr.lstat(os_path)
+            contents_mgr.storage.lstat(os_path)
         ## We need to return a checkpoint here even if the file doesn't exist
         except OSError:
             return [self._get_mock_checkpoint(path, contents_mgr)]
-        checkpoints = [self._checkpoint_model(v) for v in contents_mgr.list_file_versions(os_path)]
+        checkpoints = [self._checkpoint_model(v) for v in contents_mgr.versions.list_file_versions(os_path)]
         # Return a mock checkpoint if no versions exist, otherwise jupyter will panic.
         return checkpoints or [self._get_mock_checkpoint(path, contents_mgr)]
 
@@ -81,7 +81,7 @@ class CS3FileCheckpoints(AsyncCheckpoints):
         # and then list checkpoints, so we need to return something valid
         # even if the file isn't there yet in Reva.
         try:
-            mtime = contents_mgr.lstat(src_path).st_mtime
+            mtime = contents_mgr.storage.lstat(src_path).st_mtime
         except Exception:
             mtime = datetime.datetime.now().timestamp()
         ts = datetime.datetime.fromtimestamp(mtime)

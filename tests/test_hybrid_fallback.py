@@ -316,7 +316,7 @@ def test_write_rejected_by_a_lock_race_is_423_not_500(manager, patch_cs3, fuse_d
     """Locked between our lock check and the upload: the storage refuses the write."""
     os_path = f"{fuse_dir}/doc.txt"
     patch_cs3.put(os_path, b"theirs", lock={"app_name": "collabora", "lock_id": "x"})
-    monkeypatch.setattr(manager, "acquire_or_refresh_lock", lambda path: "held")
+    monkeypatch.setattr(manager.locks, "acquire_or_refresh_lock", lambda path: "held")
     with pytest.raises(HTTPError) as exc:
         manager.save({"type": "file", "content": "mine", "format": "text"}, "doc.txt")
     assert exc.value.status_code == 423
@@ -329,3 +329,13 @@ def test_binary_file_round_trips_through_cs3(manager, patch_cs3, fuse_dir):
     manager.save({"type": "file", "content": content, "format": "base64"}, "blob.bin")
     assert patch_cs3.files[f"{fuse_dir}/blob.bin"] == data
     assert manager.get("blob.bin", content=True, format="base64")["content"] == content
+
+
+def test_preferred_dir_only_in_cs3_passes_validation(patch_cs3, fuse_dir):
+    """Upstream validates preferred_dir while loading config, before __init__
+    has run: the CS3 fallback must already work then."""
+    patch_cs3.files[f"{fuse_dir}/new-project"] = DIR
+    manager = make_manager(
+        CS3HybridLargeFileManager, patch_cs3, root_dir=str(fuse_dir), preferred_dir="new-project"
+    )
+    assert manager.preferred_dir == "new-project"

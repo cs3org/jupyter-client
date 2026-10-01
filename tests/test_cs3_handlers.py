@@ -2,6 +2,7 @@
 
 import json
 import threading
+from types import SimpleNamespace
 
 import pytest
 from google.protobuf.struct_pb2 import Struct
@@ -22,36 +23,32 @@ def user_share(opaque_id):
 
 
 class FakeSharingClient:
-    user_idp = "idp"
-    user_opaque_id = "me"
+    """The extension's client: a session, and an object per CS3 service."""
 
     def __init__(self):
         self.threads = set()
         self.error = None
+        self.session = SimpleNamespace(user_idp="idp", user_opaque_id="me")
+        self.users = SimpleNamespace(
+            find_users=self._rpc(lambda search, user_type=None: [message(username=search)]),
+            get_user=self._rpc(lambda idp, user_id: message(display_name=f"User {user_id}")),
+        )
+        self.sharing = SimpleNamespace(
+            list_existing_shares_by_creator=self._rpc(lambda idp, opaque_id: ([user_share("alice")], None)),
+            list_existing_public_shares_by_creator=self._rpc(
+                lambda idp, opaque_id: ([message(public_share={"id": {"opaque_id": "p1"}})], None)
+            ),
+            remove_share=self._rpc(lambda share_id: None),
+        )
 
-    def _called(self):
-        self.threads.add(threading.current_thread())
-        if self.error:
-            raise self.error
-
-    def find_users(self, search, user_type=None):
-        self._called()
-        return [message(username=search)]
-
-    def get_user(self, idp, user_id):
-        self._called()
-        return message(display_name=f"User {user_id}")
-
-    def list_existing_shares_by_creator(self, idp, opaque_id):
-        self._called()
-        return [user_share("alice")], None
-
-    def list_existing_public_shares_by_creator(self, idp, opaque_id):
-        self._called()
-        return [message(public_share={"id": {"opaque_id": "p1"}})], None
-
-    def remove_share(self, share_id):
-        self._called()
+    def _rpc(self, result):
+        """A fake RPC: records the calling thread, fails with self.error if set."""
+        def call(*args, **kwargs):
+            self.threads.add(threading.current_thread())
+            if self.error:
+                raise self.error
+            return result(*args, **kwargs)
+        return call
 
 
 @pytest.fixture(autouse=True)

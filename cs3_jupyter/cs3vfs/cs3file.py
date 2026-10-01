@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from typing import Optional, Union, TYPE_CHECKING
 if TYPE_CHECKING:
-    from .cs3vfs import CS3VirtualFileSystem
+    from .cs3vfs import CS3Storage
 
 
 class CS3File:
     """File-like object for CS3 storage with proper context manager support."""
 
-    def __init__(self, cs3_vfs: "CS3VirtualFileSystem", path: str, mode: str = 'r', encoding: Optional[str] = None) -> None:
-        self.cs3_vfs = cs3_vfs
+    def __init__(self, storage: "CS3Storage", path: str, mode: str = 'r', encoding: Optional[str] = None) -> None:
+        self.storage = storage
         self.path = path
         self.mode = mode
         self.encoding = encoding or 'utf-8'
@@ -36,7 +36,7 @@ class CS3File:
     def _load_content(self) -> None:
         """Load file content from CS3."""
         try:
-            content = self.cs3_vfs.read_bytes(self.path)
+            content = self.storage.read_bytes(self.path)
         except Exception:
             if 'r' in self.mode:
                 raise
@@ -88,7 +88,7 @@ class CS3File:
             content = self._content
             if isinstance(content, str):
                 content = content.encode(self.encoding)
-            self.cs3_vfs.write_bytes(self.path, content)
+            self.storage.write_bytes(self.path, content)
             self._modified = False
 
     def close(self) -> None:
