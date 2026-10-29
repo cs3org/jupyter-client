@@ -1,5 +1,5 @@
 import { FileBrowser } from '@jupyterlab/filebrowser';
-import { IQuota, fetchQuota, formatBytes } from './quota';
+import { fetchQuota, formatBytes } from './quota';
 
 const CSS = {
   container: 'swan-quota-container',
@@ -52,25 +52,38 @@ export async function attachQuotaIndicator(fileBrowser: FileBrowser): Promise<vo
 }
 
 async function updateQuota(label: HTMLElement, barInner: HTMLElement): Promise<void> {
+  let quota;
+
   try {
-    const quota: IQuota = await fetchQuota();
-    const fraction = quota.total > 0 ? quota.used / quota.total : 0;
-    const percent = Math.min(fraction * 100, 100);
-
-    label.textContent = `${formatBytes(quota.used)} / ${formatBytes(quota.total)}`;
-
-    barInner.style.width = `${percent}%`;
-
-    // Remove old threshold classes
-    barInner.classList.remove(CSS.barWarning, CSS.barCritical);
-
-    if (fraction >= CRITICAL_THRESHOLD) {
-      barInner.classList.add(CSS.barCritical);
-    } else if (fraction >= WARN_THRESHOLD) {
-      barInner.classList.add(CSS.barWarning);
-    }
+    quota = await fetchQuota();
   } catch {
-    label.textContent = 'Quota unavailable';
-    barInner.style.width = '0%';
+    setErrorMessage(label, barInner);
+    return;
   }
+
+  if (!quota) {
+    setErrorMessage(label, barInner);
+    return;
+  }
+
+  const fraction = quota.totalBytes > 0 ? quota.usedBytes / quota.totalBytes : 0;
+  const percent = Math.min(fraction * 100, 100);
+
+  label.textContent = `${formatBytes(quota.usedBytes)} / ${formatBytes(quota.totalBytes)}`;
+
+  barInner.style.width = `${percent}%`;
+
+  // Remove old threshold classes
+  barInner.classList.remove(CSS.barWarning, CSS.barCritical);
+
+  if (fraction >= CRITICAL_THRESHOLD) {
+    barInner.classList.add(CSS.barCritical);
+  } else if (fraction >= WARN_THRESHOLD) {
+    barInner.classList.add(CSS.barWarning);
+  }
+}
+
+function setErrorMessage(label: HTMLElement, barInner: HTMLElement) {
+  label.textContent = 'Quota unavailable';
+  barInner.style.width = '0%';
 }
