@@ -358,13 +358,13 @@ class FindGroupsHandler(_CS3HandlerBase):
         self.set_header("Content-Type", "application/json")
         self.write({"search": search, "items": groups_list})
 
-class GetQuotaHandler(_CS3HandlerBase):
+class GetMyQuotaHandler(_CS3HandlerBase):
     """
-    Handler for retrieving quota information for the user.
+    Handler for retrieving the current user's quota.
     """
     @web.authenticated
     async def get(self):
-        path = self.get_query_argument("path", default="")
+        path = self.cs3.storage_path_from_user(self.cs3.client_id)
         try:
             quota = self.cs3.get_quota(path)
         except Exception as e:
@@ -403,4 +403,5 @@ default_handlers = [
     (url_path_join("share", "getSharedByMe"), SharedByMeHandler),
     (url_path_join("share", "getSharedWithMe"), SharedWithMeHandler),
     (url_path_join("share", "getSharedByResource"), SharedByResourceHandler),
+    (url_path_join("quota", "me"), GetMyQuotaHandler),
 ]

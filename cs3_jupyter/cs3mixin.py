@@ -9,7 +9,7 @@ from typing import Any
 from anyio.to_thread import run_sync
 from cs3client.auth import Auth
 from cs3client.cs3client import CS3Client
-from traitlets import Bool, Int, Unicode
+from traitlets import Bool, Callable, Int, Unicode
 from traitlets.config.configurable import LoggingConfigurable
 
 
@@ -65,6 +65,11 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
     lock_not_impl = Bool(default_value=False, config=True, help="Lock not implemented flag")
     lock_by_setting_attr = Bool(default_value=False, config=True, help="Fall back to advisory xattr locks when the storage does not implement locking")
     client_id = Unicode(default_value="", config=True, help="CS3 client ID (can be set in config)")
+    storage_path_from_user = Callable(
+        default_value=lambda user: user,
+        config=True,
+        help="Function mapping a username to a full storage path, e.g. <user> -> /eos/user/<u>/<user>",
+    )
 
 
     def __init__(self, **kwargs: Any):
