@@ -403,4 +403,5 @@ default_handlers = [
     (url_path_join("share", "getSharedByMe"), SharedByMeHandler),
     (url_path_join("share", "getSharedWithMe"), SharedWithMeHandler),
     (url_path_join("share", "getSharedByResource"), SharedByResourceHandler),
+    (url_path_join("quota"), GetQuotaHandler),
 ]
