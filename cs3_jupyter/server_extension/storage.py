@@ -28,5 +28,5 @@ class GetSpaceHandler(APIHandler):
 
 
 default_handlers = [
-    (url_path_join("space", "list"), GetSpaceHandler),
+    (url_path_join("spaces"), GetSpaceHandler),
 ]

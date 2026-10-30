@@ -135,10 +135,11 @@ applications (sync clients, web office, ...) cannot write to them concurrently.
 - `lock_expiration` (default `300` seconds): locks not refreshed within this
   window expire in the storage; it is also the session-tracker heartbeat timeout.
 
-The `/lock` API tracks how many sessions have a document open (`POST
-/lock?path=...&session_id=...` on open and as heartbeat, `DELETE` on close) and
-releases the reva lock when the last session leaves. A background task refreshes
-locks for tracked sessions and unlocks documents whose sessions went stale.
+The `/cs3/lock` API tracks how many sessions have a document open (`POST
+/cs3/lock?path=...&session_id=...` on open and as heartbeat, `DELETE` on
+close) and releases the reva lock when the last session leaves. A background
+task refreshes locks for tracked sessions and unlocks documents whose sessions
+went stale.
 
 ### Authentication
 

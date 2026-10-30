@@ -16,7 +16,7 @@ export interface ITrackedDocumentWidget {
 }
 
 /**
- * Client for the server extension's /lock endpoint.
+ * Client for the server extension's /cs3/lock endpoint.
  *
  * Every open document holds a CS3 lock in the storage, refreshed by a
  * heartbeat while the document stays open. The server counts sessions per
@@ -38,7 +38,7 @@ interface ILockResponse {
 function lockRequest(method: 'POST' | 'DELETE', path: string, sessionId: string): Promise<Response> {
   const settings = ServerConnection.makeSettings();
   const query = `?path=${encodeURIComponent(path)}&session_id=${encodeURIComponent(sessionId)}`;
-  return ServerConnection.makeRequest(settings.baseUrl + 'lock' + query, { method }, settings);
+  return ServerConnection.makeRequest(settings.baseUrl + 'cs3/lock' + query, { method }, settings);
 }
 
 function newSessionId(): string {
@@ -56,7 +56,7 @@ export class DocumentLockTracker {
   async initialize(): Promise<void> {
     try {
       const settings = ServerConnection.makeSettings();
-      const resp = await ServerConnection.makeRequest(settings.baseUrl + 'lock', {}, settings);
+      const resp = await ServerConnection.makeRequest(settings.baseUrl + 'cs3/lock', {}, settings);
       if (resp.ok) {
         const data = await resp.json();
         if (typeof data.expiration === 'number' && data.expiration > 0) {

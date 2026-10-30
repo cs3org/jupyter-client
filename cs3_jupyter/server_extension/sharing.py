@@ -398,10 +398,10 @@ class GetSpaceHandler(_CS3HandlerBase):
 
 
 default_handlers = [
-    (url_path_join("share", "share"), SharesHandler),
-    (url_path_join("share", "link"), LinkHandler),
-    (url_path_join("share", "getSharedByMe"), SharedByMeHandler),
-    (url_path_join("share", "getSharedWithMe"), SharedWithMeHandler),
-    (url_path_join("share", "getSharedByResource"), SharedByResourceHandler),
+    (url_path_join("shares"), SharesHandler),
+    (url_path_join("shares", "link"), LinkHandler),
+    (url_path_join("shares", "getSharedByMe"), SharedByMeHandler),
+    (url_path_join("shares", "getSharedWithMe"), SharedWithMeHandler),
+    (url_path_join("shares", "getSharedByResource"), SharedByResourceHandler),
     (url_path_join("quota", "me"), GetMyQuotaHandler),
 ]
