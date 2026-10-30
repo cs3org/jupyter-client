@@ -42,7 +42,7 @@ class FakeLockCM(AsyncLargeFileManager):
 
 
 @pytest.fixture
-def jp_server_config():
+def jp_server_config(patch_cs3):
     return {
         "ServerApp": {
             "contents_manager_class": FakeLockCM,
