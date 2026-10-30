@@ -31,7 +31,6 @@ export class SpacesWidget extends Widget {
   private _fileBrowser: FileBrowser;
   private _shell: JupyterFrontEnd.IShell;
   private _listNode: HTMLElement;
-  private _spaces: ISpace[] = [];
 
   constructor(fileBrowser: FileBrowser, shell: JupyterFrontEnd.IShell) {
     super();
@@ -84,21 +83,29 @@ export class SpacesWidget extends Widget {
     this._listNode.innerHTML = '';
     this._showLoading();
 
+    let spaces;
     try {
-      this._spaces = await fetchSpaces();
-      this._renderSpaces();
-    } catch (err) {
-      this._showError(err instanceof Error ? err.message : 'Failed to load spaces');
+      spaces = await fetchSpaces();
+    } catch {
+      this._showError('Failed to load spaces');
+      return;
     }
+
+    if (spaces === null) {
+      this._showError('Failed to load spaces');
+      return;
+    }
+
+    this._renderSpaces(spaces);
   }
 
   /**
    * Render the list of spaces.
    */
-  private _renderSpaces() {
+  private _renderSpaces(spaces: ISpace[]) {
     this._listNode.innerHTML = '';
 
-    if (this._spaces.length === 0) {
+    if (spaces.length === 0) {
       const empty = document.createElement('div');
       empty.className = CSS.empty;
       empty.textContent = 'No spaces available';
@@ -106,7 +113,7 @@ export class SpacesWidget extends Widget {
       return;
     }
 
-    for (const space of this._spaces) {
+    for (const space of spaces) {
       const item = this._createSpaceItem(space);
       this._listNode.appendChild(item);
     }

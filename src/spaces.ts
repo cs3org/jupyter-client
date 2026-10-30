@@ -1,15 +1,34 @@
-/**
- * A CERNBox Space (project) that the user has access to.
- */
-export interface ISpace {
-  /** Unique identifier */
-  id: string;
-  /** Display name */
+import { ServerConnection } from '@jupyterlab/services';
+
+interface ISpaceResponse {
+  id: {
+    opaque_id: string;
+  };
   name: string;
-  /** Optional description */
   description?: string;
+  quota: {
+    quota_max_bytes: number;
+    remaining_bytes: number;
+  };
+  root_info: {
+    path: string;
+  };
+}
+
+interface ISpacesResponse {
+  spaces: ISpaceResponse[];
+}
+
+export interface ISpace {
+  id: string;
+  name: string;
+  description?: string;
+  quota: {
+    maxBytes: number;
+    remainingBytes: number;
+  };
   /**
-   * Path relative to the ContentsManager root_dir (i.e. /eos).
+   * Path relative to the ContentsManager root_dir (e.g. /eos).
    * Example: "/project/a/atlas-analysis"
    */
   path: string;
@@ -17,42 +36,38 @@ export interface ISpace {
 
 /**
  * Fetch the list of spaces the current user has access to.
- *
- * TODO: Replace with a real CS3/CERNBox API call.
  */
-export async function fetchSpaces(): Promise<ISpace[]> {
-  // Simulate network latency
-  await new Promise(resolve => setTimeout(resolve, 300));
+export async function fetchSpaces(): Promise<ISpace[] | null> {
+  const settings = ServerConnection.makeSettings();
+  let resp;
+  try {
+    resp = await ServerConnection.makeRequest(`${settings.baseUrl}cs3/spaces`, {}, settings);
+  } catch (err) {
+    console.warn('[cs3org/cs3-jupyter-client] Could not fetch spaces', err);
+    return null;
+  }
 
-  return [
-    {
-      id: 'atlas-analysis',
-      name: 'ATLAS Analysis',
-      description: 'Shared analysis workspace for the ATLAS experiment',
-      path: '/project/a/atlas-analysis'
+  if (!resp.ok) {
+    console.warn('[cs3org/cs3-jupyter-client] Could not fetch spaces', resp.statusText);
+    return null;
+  }
+
+  let data: ISpacesResponse;
+  try {
+    data = await resp.json();
+  } catch {
+    console.warn('[cs3org/cs3-jupyter-client] Could not fetch spaces', resp.statusText);
+    return null;
+  }
+
+  return data.spaces.map(space => ({
+    id: space.id.opaque_id,
+    name: space.name,
+    description: space.description,
+    quota: {
+      maxBytes: space.quota.quota_max_bytes,
+      remainingBytes: space.quota.remaining_bytes
     },
-    {
-      id: 'cms-opendata',
-      name: 'CMS Open Data',
-      description: 'Public datasets and analysis scripts for CMS open data',
-      path: '/project/c/cms-opendata'
-    },
-    {
-      id: 'it-swan-dev',
-      name: 'SWAN Development',
-      description: 'Internal development and testing for the SWAN team',
-      path: '/project/s/swan-dev'
-    },
-    {
-      id: 'theory-lattice',
-      name: 'Lattice QCD',
-      path: '/project/l/lattice'
-    },
-    {
-      id: 'alice-qgp',
-      name: 'ALICE QGP Studies',
-      description: 'Quark-gluon plasma analysis notebooks and shared results',
-      path: '/project/a/alice-qgp'
-    }
-  ];
+    path: space.root_info.path.slice('/eos'.length) // TODO: Don't hardcode this prefix
+  }));
 }
