@@ -93,8 +93,8 @@ export async function fetchShares(): Promise<Share[]> {
   const settings = ServerConnection.makeSettings();
 
   const [byMeResp, withMeResp] = await Promise.all([
-    ServerConnection.makeRequest(settings.baseUrl + 'share/getSharedByMe', {}, settings),
-    ServerConnection.makeRequest(settings.baseUrl + 'share/getSharedWithMe', {}, settings)
+    ServerConnection.makeRequest(settings.baseUrl + 'cs3/shares/getSharedByMe', {}, settings),
+    ServerConnection.makeRequest(settings.baseUrl + 'cs3/shares/getSharedWithMe', {}, settings)
   ]);
 
   if (!byMeResp.ok) {
@@ -208,7 +208,7 @@ function roleFromRawPermissions(permissions: Record<string, unknown> | undefined
 
 export async function fetchSharesForResource(rawPath: string): Promise<ShareGranteeDetail[]> {
   const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'share/getSharedByResource?' + new URLSearchParams({ path: rawPath });
+  const url = settings.baseUrl + 'cs3/shares/getSharedByResource?' + new URLSearchParams({ path: rawPath });
   const resp = await ServerConnection.makeRequest(url, {}, settings);
 
   if (!resp.ok) {
@@ -238,7 +238,7 @@ export async function fetchSharesForResource(rawPath: string): Promise<ShareGran
 
 export async function removeShare(shareId: string): Promise<void> {
   const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'share/share?' + new URLSearchParams({ share_id: shareId });
+  const url = settings.baseUrl + 'cs3/shares?' + new URLSearchParams({ share_id: shareId });
   const resp = await ServerConnection.makeRequest(url, { method: 'DELETE' }, settings);
 
   if (!resp.ok) {
@@ -249,7 +249,7 @@ export async function removeShare(shareId: string): Promise<void> {
 
 export async function updateShareRole(shareId: string, role: ShareRole): Promise<void> {
   const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'share/share?' + new URLSearchParams({ share_id: shareId });
+  const url = settings.baseUrl + 'cs3/shares?' + new URLSearchParams({ share_id: shareId });
   const resp = await ServerConnection.makeRequest(
     url,
     {
@@ -273,7 +273,7 @@ export async function createShare(
   granteeType: GranteeType
 ): Promise<void> {
   const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'share/share?' + new URLSearchParams({ path: rawPath });
+  const url = settings.baseUrl + 'cs3/shares?' + new URLSearchParams({ path: rawPath });
   const resp = await ServerConnection.makeRequest(
     url,
     {
@@ -296,7 +296,7 @@ export async function createShare(
 
 export async function findUsers(query: string, signal?: AbortSignal): Promise<UserSearchResult[]> {
   const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'find/users?' + new URLSearchParams({ search: query });
+  const url = settings.baseUrl + 'cs3/find/users?' + new URLSearchParams({ search: query });
   const resp = await ServerConnection.makeRequest(url, { signal }, settings);
 
   if (!resp.ok) {
@@ -315,7 +315,7 @@ export async function findUsers(query: string, signal?: AbortSignal): Promise<Us
 
 export async function findGroups(query: string, signal?: AbortSignal): Promise<GroupSearchResult[]> {
   const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'find/groups?' + new URLSearchParams({ search: query });
+  const url = settings.baseUrl + 'cs3/find/groups?' + new URLSearchParams({ search: query });
   const resp = await ServerConnection.makeRequest(url, { signal }, settings);
 
   if (!resp.ok) {

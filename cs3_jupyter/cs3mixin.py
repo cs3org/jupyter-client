@@ -142,7 +142,7 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
         """Keep locks of open documents alive and release locks whose sessions all went stale.
 
         Runs while the session tracker has entries; exits when idle (restarted
-        lazily by the next POST /lock).
+        lazily by the next POST /cs3/lock).
         """
         interval = max(self.lock_expiration // 3, 10)
         while True:

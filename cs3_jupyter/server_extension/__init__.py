@@ -28,8 +28,9 @@ def setup_handlers(web_app):
     base_url = web_app.settings["base_url"]
     host_pattern = ".*$"
 
+    # Every endpoint lives under /cs3/, apart from Jupyter's and other extensions' routes
     handlers = []
     for url, class_ in default_handlers:
-        handlers.append((url_path_join(base_url, url), class_))
+        handlers.append((url_path_join(base_url, "cs3", url), class_))
 
     web_app.add_handlers(host_pattern, handlers)

@@ -108,13 +108,13 @@ const quotaPlugin: JupyterFrontEndPlugin<void> = {
  * The Document Locking plugin.
  *
  * Notifies the server extension when documents are opened and closed
- * (POST/DELETE /lock with a per-widget session id) and heartbeats while
+ * (POST/DELETE /cs3/lock with a per-widget session id) and heartbeats while
  * they stay open, so the CS3 lock on the file is held for exactly as long
  * as someone has it open and released when the last session leaves.
  */
 const lockingPlugin: JupyterFrontEndPlugin<void> = {
   id: '@cs3org/cs3-jupyter-client:locking',
-  description: 'Hold CS3 locks on open documents via the /lock endpoint',
+  description: 'Hold CS3 locks on open documents via the /cs3/lock endpoint',
   autoStart: true,
   requires: [IDocumentWidgetOpener],
   activate: (app: JupyterFrontEnd, opener: IDocumentWidgetOpener) => {

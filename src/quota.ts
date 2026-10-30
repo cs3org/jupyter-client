@@ -22,7 +22,7 @@ export async function fetchQuota(): Promise<IQuota | null> {
   const settings = ServerConnection.makeSettings();
   let resp;
   try {
-    resp = await ServerConnection.makeRequest(`${settings.baseUrl}quota/me`, {}, settings);
+    resp = await ServerConnection.makeRequest(`${settings.baseUrl}cs3/quota/me`, {}, settings);
   } catch (err) {
     console.warn('[cs3org/cs3-jupyter-client] Could not fetch quota', err);
     return null;

@@ -11,9 +11,9 @@ class LockHandler(APIHandler):
     """
     Handler for managing the lock on a document.
 
-    GET    /lock                          return server lock expiration
-    POST   /lock?path=...&session_id=...  acquire/refresh a lock (document open + heartbeat)
-    DELETE /lock?path=...&session_id=...  release the lock (document close)
+    GET    /cs3/lock                          return server lock expiration
+    POST   /cs3/lock?path=...&session_id=...  acquire/refresh a lock (document open + heartbeat)
+    DELETE /cs3/lock?path=...&session_id=...  release the lock (document close)
     """
     async def _lock_args(self):
         path = self.get_query_argument("path", default="")
