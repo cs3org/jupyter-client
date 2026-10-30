@@ -205,7 +205,7 @@ class FakeCS3(object):
 
 
 class FakeAuth:
-    def __init__(self, client=None):
+    def __init__(self, *args, **kwargs):
         pass
 
     def set_client_id(self, client_id):
@@ -231,7 +231,7 @@ def patch_cs3(monkeypatch, fake_cs3):
         "CS3Client",
         lambda config, name, log: SimpleNamespace(file=fake_cs3),
     )
-    monkeypatch.setattr(cs3mixin_module, "Auth", FakeAuth)
+    monkeypatch.setattr(cs3mixin_module, "FileAuth", FakeAuth)
     return fake_cs3
 
 
