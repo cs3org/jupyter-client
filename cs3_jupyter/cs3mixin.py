@@ -23,6 +23,47 @@ from .cs3vfs.cs3users import CS3Users
 from .cs3vfs.cs3lock import CS3Lock
 from .sessiontracker import SessionTracker
 
+
+class FileAuth(Auth):
+    """Auth that reloads client secret on demand.
+
+    This is useful when:
+    - The client secret file does not yet exist when the extension loads.
+      In this case, it will reload the secret on the next get_token() call.
+    - When the client secret file changes
+
+    It tracks the mtime to determine if the client secret is newer than what
+    is already cached.
+    """
+
+    def __init__(self, cs3_client: CS3Client, token_path: str) -> None:
+        super().__init__(cs3_client)
+        self._token_path = token_path
+        self._secret_mtime: int | None = None
+
+    def _load_secret(self) -> None:
+        try:
+            mtime = os.stat(self._token_path).st_mtime_ns
+        except OSError:
+            return  # token file does not exist (yet)
+        if mtime == self._secret_mtime:
+            return  # token file did not change, skip
+        with open(self._token_path) as f:
+            secret = f.read().strip()
+        if not secret:
+            return  # token file read mid-write, re-read next time
+        self.set_client_secret(secret)
+        self._secret_mtime = mtime
+
+    def refresh(self) -> None:
+        self._load_secret()
+        self._token = None
+
+    def get_token(self) -> tuple[str, str]:
+        self._load_secret()
+        return super().get_token()
+
+
 class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing, CS3FileVersions, CS3Lock, LoggingConfigurable):
     """Owns the shared CS3Client/Auth and persistent service instances."""
 
@@ -74,17 +115,14 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
 
     def __init__(self, **kwargs: Any):
         self.status_handler = StatusCodeHandler()
-        self.cs3_token = ""
         self._lock_refresher = None
         self._stat_cache: dict[str, tuple[Any, float]] = {}
         self._pending_paths: dict[str, float] = {}  # changed via CS3, mount may lag
         super().__init__(**kwargs)
-        self._read_token_file()
         self._config = self._create_cs3_config()
         self.client = CS3Client(self._config, "cs3client", self.log)
-        self.auth = Auth(self.client)
+        self.auth = FileAuth(self.client, self.token_path)
         self.auth.set_client_id(self.client_id)
-        self.auth.set_client_secret(self.cs3_token)
         self.session_tracker = SessionTracker(heartbeat_timeout_seconds=self.lock_expiration)
         self.log.debug(f"CS3ClientMixinBase initialized with path: {self.root_path}")
 
@@ -103,20 +141,8 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
     def get_user_path(self) -> str:
         return self.root_path
 
-    def _read_token_file(self) -> None:
-        try:
-            if os.path.exists(self.token_path):
-                with open(self.token_path, "r") as f:
-                    self.cs3_token = f.read().strip()
-            else:
-                self.log.warning(f"Token file not found: {self.token_path}")
-        except Exception as e:
-            self.log.error(f"Failed to read token file {self.token_path}: {e}")
-
     def _refresh_auth(self) -> None:
-        """Reload token/secret from disk and update the shared Auth object."""
-        self._read_token_file()
-        self.auth.set_client_secret(self.cs3_token)
+        self.auth.refresh()
 
     def _create_cs3_config(self) -> ConfigParser:
         cs3config = ConfigParser()

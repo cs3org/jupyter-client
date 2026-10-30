@@ -5,7 +5,15 @@ Authors: Rasmus Oscar Welander.
 Emails: rasmus.oscar.welander@cern.ch.
 """
 
-from cs3client.exceptions import AuthenticationException, PermissionDeniedException, NotFoundException, AlreadyExistsException, FileLockedException, UnimplementedException
+from cs3client.exceptions import (
+    AuthenticationException,
+    PermissionDeniedException,
+    NotFoundException,
+    AlreadyExistsException,
+    FileLockedException,
+    SecretNotSetException,
+    UnimplementedException,
+)
 
 
 # Subclass of OSError so existing `except OSError` handlers keep working,
@@ -26,7 +34,7 @@ class StatusCodeHandler:
             raise NotImplementedError("Operation not implemented")
         if isinstance(e, NotFoundException):
             raise FileNotFoundError("No such file or directory")
-        if isinstance(e, AuthenticationException):
+        if isinstance(e, (AuthenticationException, SecretNotSetException)):
             raise PermissionError("Authentication failed")
         if isinstance(e, PermissionDeniedException):
             raise PermissionError("Permission denied")
@@ -36,6 +44,7 @@ class StatusCodeHandler:
         # missing file during a lock operation) as a generic internal error,
         # and the message is the only thing that says which.
         raise OSError(f"Unknown error occurred: {e}") from e
+
 
 class ErrorToHttpCode:
     def map_exception_to_http_code(self, e: Exception) -> int:
@@ -47,7 +56,7 @@ class ErrorToHttpCode:
             return 501  # Not Implemented
         if isinstance(e, NotFoundException):
             return 404  # Not Found
-        if isinstance(e, AuthenticationException):
+        if isinstance(e, (AuthenticationException, SecretNotSetException)):
             return 401  # Unauthorized
         if isinstance(e, PermissionDeniedException):
             return 403  # Forbidden
