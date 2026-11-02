@@ -7,17 +7,16 @@ Emails: rasmus.oscar.welander@cern.ch.
 
 from __future__ import annotations
 
-import base64
 from typing import Optional, Union, TYPE_CHECKING
 if TYPE_CHECKING:
-    from .cs3vfs import CS3VirtualFileSystem
+    from .storage import CS3Storage
 
 
 class CS3File:
     """File-like object for CS3 storage with proper context manager support."""
 
-    def __init__(self, cs3_vfs: "CS3VirtualFileSystem", path: str, mode: str = 'r', encoding: Optional[str] = None) -> None:
-        self.cs3_vfs = cs3_vfs
+    def __init__(self, storage: "CS3Storage", path: str, mode: str = 'r', encoding: Optional[str] = None) -> None:
+        self.storage = storage
         self.path = path
         self.mode = mode
         self.encoding = encoding or 'utf-8'
@@ -37,16 +36,12 @@ class CS3File:
     def _load_content(self) -> None:
         """Load file content from CS3."""
         try:
-            if 'b' in self.mode:
-                result = self.cs3_vfs.read_file(self.path, "byte")
-                self._content = result[0]
-            else:
-                result = self.cs3_vfs.read_file(self.path, "text")
-                self._content = result[0]
+            content = self.storage.read_bytes(self.path)
         except Exception:
             if 'r' in self.mode:
                 raise
-            self._content = b'' if 'b' in self.mode else ''
+            content = b''
+        self._content = content if 'b' in self.mode else content.decode(self.encoding)
 
     def read(self, size: int = -1) -> Union[str, bytes]:
         """Read from file."""
@@ -90,13 +85,10 @@ class CS3File:
             return
 
         if 'w' in self.mode or 'a' in self.mode:
-            if isinstance(self._content, str):
-                format = "text"
-                content = self._content
-            else:
-                format = "base64"
-                content = base64.encodebytes(self._content).decode("ascii")
-            self.cs3_vfs.vfs_save_file(self.path, content, format)
+            content = self._content
+            if isinstance(content, str):
+                content = content.encode(self.encoding)
+            self.storage.write_bytes(self.path, content)
             self._modified = False
 
     def close(self) -> None:

@@ -16,7 +16,7 @@ from cs3client.exceptions import (
     UnknownException,
 )
 
-import cs3_jupyter.cs3mixin as cs3mixin_module
+import cs3_jupyter.cs3api.session as session_module
 
 DIR = object()  # sentinel value marking a directory entry
 
@@ -204,6 +204,13 @@ class FakeCS3(object):
         del self.locks[path]
 
 
+class FakeVersions:
+    """Stands in for cs3client's `client.checkpoint`: no file has versions yet."""
+
+    def list_file_versions(self, token, resource):
+        return []
+
+
 class FakeAuth:
     def __init__(self, *args, **kwargs):
         pass
@@ -218,6 +225,30 @@ class FakeAuth:
         return ("x-access-token", "fake-token")
 
 
+class FakeLocks:
+    """The lock service DocumentLocks drives, recording what it was asked."""
+
+    def __init__(self):
+        self.state = "held"
+        self.unlocked = []
+        self.refreshed = []
+        self.unlock_error = None
+
+    def acquire_or_refresh_lock(self, path):
+        return self.state
+
+    def foreign_lock_holder(self, path):
+        return "collabora"
+
+    def refresh_lock(self, path):
+        self.refreshed.append(path)
+
+    def unlock(self, path):
+        if self.unlock_error:
+            raise self.unlock_error
+        self.unlocked.append(path)
+
+
 @pytest.fixture
 def fake_cs3():
     return FakeCS3()
@@ -225,13 +256,13 @@ def fake_cs3():
 
 @pytest.fixture
 def patch_cs3(monkeypatch, fake_cs3):
-    """Make CS3Mixin subclasses instantiable offline, backed by fake_cs3."""
+    """Make CS3 sessions (so CS3Mixin subclasses) work offline, backed by fake_cs3."""
     monkeypatch.setattr(
-        cs3mixin_module,
+        session_module,
         "CS3Client",
-        lambda config, name, log: SimpleNamespace(file=fake_cs3),
+        lambda config, name, log: SimpleNamespace(file=fake_cs3, checkpoint=FakeVersions()),
     )
-    monkeypatch.setattr(cs3mixin_module, "FileAuth", FakeAuth)
+    monkeypatch.setattr(session_module, "FileAuth", FakeAuth)
     return fake_cs3
 
 

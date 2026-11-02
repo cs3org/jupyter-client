@@ -1,8 +1,8 @@
-from .upstreamlargefilemanager import UpstreamLargeFileManager
-from .filemanager import CS3FileContentsManager, CS3HybridFileManager
-from jupyter_server.services.contents.largefilemanager import LargeFileManager
-class CS3LargeFileManager(CS3FileContentsManager, UpstreamLargeFileManager):
-    pass
-# Override open via CS3HybridFileManager, to introduce locking when opening a file.
-class CS3HybridLargeFileManager(CS3HybridFileManager, LargeFileManager):
-    pass
+"""The contents managers to configure as ServerApp.contents_manager_class.
+
+Kept as the import path deployments configure; the managers live in contents/.
+"""
+
+from .contents import CS3HybridLargeFileManager, CS3LargeFileManager
+
+__all__ = ["CS3HybridLargeFileManager", "CS3LargeFileManager"]

@@ -154,3 +154,66 @@ def test_chunked_upload_assembles_file(manager, patch_cs3):
     assert patch_cs3.files[f"{ROOT}/big.txt"] == b"aabbcc"
     # the upload holds our lock from chunk 1 onwards
     assert patch_cs3.locks[f"{ROOT}/big.txt"]["app_name"] == manager.lock_holder
+
+
+def test_checkpoints_share_the_managers_client(patch_cs3, monkeypatch):
+    """Checkpoints used to build a second CS3Client (and Auth, and stat cache)."""
+    import cs3_jupyter.cs3api.session as session_module
+    from types import SimpleNamespace
+
+    clients = []
+
+    def client(config, name, log):
+        clients.append(SimpleNamespace(file=patch_cs3))
+        return clients[-1]
+
+    monkeypatch.setattr(session_module, "CS3Client", client)
+    patch_cs3.files[ROOT] = DIR
+    patch_cs3.put(f"{ROOT}/f.txt", b"x")
+    manager = make_manager(CS3LargeFileManager, patch_cs3, root_path=ROOT)
+    manager.session.client.checkpoint = SimpleNamespace(
+        list_file_versions=lambda token, resource: [SimpleNamespace(key="v1", mtime=5)]
+    )
+
+    checkpoints = asyncio.run(manager.list_checkpoints("f.txt"))
+
+    assert checkpoints == [{"id": "v1", "last_modified": "5"}]
+    assert len(clients) == 1
+
+
+def test_write_rejected_by_a_lock_race_is_423_not_500(manager, patch_cs3, monkeypatch):
+    """Locked between our lock check and the upload: the storage refuses the write."""
+    patch_cs3.put(f"{ROOT}/f.txt", b"theirs", lock={"app_name": "collabora", "lock_id": "x"})
+    monkeypatch.setattr(manager.locks, "acquire_or_refresh_lock", lambda path: "held")
+    with pytest.raises(HTTPError) as exc:
+        asyncio.run(manager.save({"type": "file", "content": "mine", "format": "text"}, "f.txt"))
+    assert exc.value.status_code == 423
+    assert patch_cs3.files[f"{ROOT}/f.txt"] == b"theirs"
+
+
+def test_undecodable_base64_is_400(manager, patch_cs3):
+    with pytest.raises(HTTPError) as exc:
+        asyncio.run(manager.save({"type": "file", "content": "abc", "format": "base64"}, "f.bin"))
+    assert exc.value.status_code == 400
+
+
+def test_notebook_saved_with_trailing_newline_like_nbformat_write(manager, patch_cs3):
+    import nbformat
+
+    nb = nbformat.v4.new_notebook()
+    asyncio.run(manager.save({"type": "notebook", "content": nb}, "nb.ipynb"))
+    saved = patch_cs3.files[f"{ROOT}/nb.ipynb"]
+    assert saved.endswith(b"\n")
+    assert nbformat.reads(saved.decode(), as_version=4) == nb
+
+
+def test_api_path_to_storage_path_costs_no_rpc(manager, patch_cs3):
+    patch_cs3.calls.clear()
+    assert manager._get_os_path("a/b.txt") == f"{ROOT}/a/b.txt"
+    assert sum(patch_cs3.calls.values()) == 0
+
+
+def test_path_with_a_null_byte_is_404(manager):
+    with pytest.raises(HTTPError) as exc:
+        manager._get_os_path("bad\0name")
+    assert exc.value.status_code == 404

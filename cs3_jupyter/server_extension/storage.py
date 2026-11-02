@@ -1,32 +1,31 @@
 from tornado import web
-from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
-from google.protobuf.json_format import MessageToDict
-from ..cs3vfs.statuscodehandler import ErrorToHttpCode
+from .base import CS3HandlerBase
+from .utils import proto_dict, proto_dicts
 
 
-class GetSpaceHandler(APIHandler):
+class GetMyQuotaHandler(CS3HandlerBase):
+    """
+    Handler for retrieving the current user's quota.
+    """
+    @web.authenticated
+    async def get(self):
+        path = self.cs3.storage_path_from_user(self.cs3.client_id)
+        quota = await self.call(self.cs3.spaces.get_quota, path)
+        self.write({"quota": proto_dict(quota)})
+
+
+class GetSpaceHandler(CS3HandlerBase):
     """
     Handler for retrieving space information for the user.
     """
     @web.authenticated
     async def get(self):
-        cm = self.contents_manager
-        try:
-            spaces = cm.list_spaces()
-        except Exception as e:
-            http_code = ErrorToHttpCode().map_exception_to_http_code(e)
-            self.set_status(http_code)
-            self.write({"error": str(e)})
-            return
-        spaces_list = [
-            MessageToDict(s, preserving_proto_field_name=True)
-            for s in spaces
-        ]
-        self.set_header("Content-Type", "application/json")
-        self.write({"spaces": spaces_list})
+        spaces = await self.call(self.cs3.spaces.list_spaces)
+        self.write({"spaces": proto_dicts(spaces)})
 
 
 default_handlers = [
+    (url_path_join("quota", "me"), GetMyQuotaHandler),
     (url_path_join("spaces"), GetSpaceHandler),
 ]

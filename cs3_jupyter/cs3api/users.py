@@ -9,9 +9,11 @@ from typing import List
 
 
 from cs3client.user import User
+from .session import CS3Service
+from .errors import translate_cs3_error
 from .utils import retry_on_auth_failure
 
-class CS3Users:
+class CS3Users(CS3Service):
     """
     CS3 operations for users.
     """
@@ -37,7 +39,7 @@ class CS3Users:
             )
             return result if result is not None else []
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def get_user(self, idp: str, user_id: str) -> 'User':
@@ -49,4 +51,4 @@ class CS3Users:
             )
             return result if result is not None else {}
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)

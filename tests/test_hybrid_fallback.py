@@ -191,6 +191,8 @@ def test_copy_streams_server_side_without_locking(manager, patch_cs3, fuse_dir):
 def test_chunked_upload_appends_via_cs3(manager, patch_cs3, fuse_dir):
     os_path = f"{fuse_dir}/big.txt"
     manager.save({"type": "file", "content": "aa", "format": "text", "chunk": 1}, "big.txt")
+    # chunk 1 created the file through open(): it is ours from here on
+    assert patch_cs3.locks[os_path]["app_name"] == manager.lock_holder
     manager.save({"type": "file", "content": "bb", "format": "text", "chunk": 2}, "big.txt")
     manager.save({"type": "file", "content": "cc", "format": "text", "chunk": -1}, "big.txt")
     assert patch_cs3.files[os_path] == b"aabbcc"
@@ -308,3 +310,32 @@ def test_listing_falls_back_to_the_mount_when_cs3_cannot_list(manager, patch_cs3
     # the parent is not a listable container in CS3, so list_dir fails
 
     assert [e["name"] for e in manager.get("", content=True)["content"]] == ["a.txt"]
+
+
+def test_write_rejected_by_a_lock_race_is_423_not_500(manager, patch_cs3, fuse_dir, monkeypatch):
+    """Locked between our lock check and the upload: the storage refuses the write."""
+    os_path = f"{fuse_dir}/doc.txt"
+    patch_cs3.put(os_path, b"theirs", lock={"app_name": "collabora", "lock_id": "x"})
+    monkeypatch.setattr(manager.locks, "acquire_or_refresh_lock", lambda path: "held")
+    with pytest.raises(HTTPError) as exc:
+        manager.save({"type": "file", "content": "mine", "format": "text"}, "doc.txt")
+    assert exc.value.status_code == 423
+    assert patch_cs3.files[os_path] == b"theirs"
+
+
+def test_binary_file_round_trips_through_cs3(manager, patch_cs3, fuse_dir):
+    data = bytes(range(256))
+    content = __import__("base64").encodebytes(data).decode("ascii")
+    manager.save({"type": "file", "content": content, "format": "base64"}, "blob.bin")
+    assert patch_cs3.files[f"{fuse_dir}/blob.bin"] == data
+    assert manager.get("blob.bin", content=True, format="base64")["content"] == content
+
+
+def test_preferred_dir_only_in_cs3_passes_validation(patch_cs3, fuse_dir):
+    """Upstream validates preferred_dir while loading config, before __init__
+    has run: the CS3 fallback must already work then."""
+    patch_cs3.files[f"{fuse_dir}/new-project"] = DIR
+    manager = make_manager(
+        CS3HybridLargeFileManager, patch_cs3, root_dir=str(fuse_dir), preferred_dir="new-project"
+    )
+    assert manager.preferred_dir == "new-project"

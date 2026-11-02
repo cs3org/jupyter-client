@@ -1,36 +1,36 @@
 import logging
+from types import SimpleNamespace
 
 import pytest
-from tornado.web import HTTPError
 
-from cs3_jupyter.cs3vfs.cs3lock import (
-    CS3Lock,
+from cs3_jupyter.cs3api.locks import (
+    CS3Locks,
     LOCK_FOREIGN,
     LOCK_HELD,
     LOCK_NO_FILE,
 )
-from cs3_jupyter.cs3vfs.statuscodehandler import StatusCodeHandler
+
+from cs3_jupyter.cs3api.errors import FileLockedError
 
 from conftest import FakeAuth, FakeCS3
 
 
-class LockOwner(CS3Lock):
-    """Minimal object exercising CS3Lock against the fake backend."""
+class FakeSession:
+    """A CS3Session over the fake backend, with no token file behind it."""
 
-    def __init__(self, fake, holder):
-        self.fake = fake
-        self.client = type("C", (), {"file": fake})()
+    def __init__(self, fake):
+        self.client = SimpleNamespace(file=fake)
         self.auth = FakeAuth()
-        self.status_handler = StatusCodeHandler()
-        self.lock_holder = holder
-        self.lock_value = "jupyter_rtc_lock"
         self.log = logging.getLogger("test")
 
-    def _refresh_auth(self):
+    def refresh_auth(self):
         pass
 
-    def vfs_exists(self, path):
-        return path in self.fake.files
+
+def locks_for(fake, holder):
+    """CS3Locks taken as `holder`, against the fake backend."""
+    storage = SimpleNamespace(exists=lambda path: path in fake.files)
+    return CS3Locks(FakeSession(fake), storage, holder, "jupyter_rtc_lock")
 
 
 @pytest.fixture
@@ -40,7 +40,7 @@ def fake():
 
 @pytest.fixture
 def owner(fake):
-    return LockOwner(fake, "jupyter-rtc-rwelande")
+    return locks_for(fake, "jupyter-rtc-rwelande")
 
 
 def test_acquire_unlocked_file(fake, owner):
@@ -89,11 +89,11 @@ def test_acquire_reraises_real_storage_errors(fake, owner, monkeypatch):
         owner.acquire_or_refresh_lock("/f")
 
 
-def test_ensure_write_lock_raises_423_with_holder(fake, owner):
+def test_ensure_write_lock_raises_with_holder(fake, owner):
     fake.put("/f", lock={"app_name": "collabora", "lock_id": "x"})
-    with pytest.raises(HTTPError) as exc:
+    with pytest.raises(FileLockedError) as exc:
         owner.ensure_write_lock("/f")
-    assert exc.value.status_code == 423
+    assert exc.value.holder == "collabora"
     assert "collabora" in str(exc.value)
 
 
@@ -125,8 +125,8 @@ def test_lock_after_create_best_effort(fake, owner):
 def test_foreign_lock_holder_exact_match(fake):
     """The shared base name must not be confused with a per-user holder."""
     fake.put("/f", lock={"app_name": "jupyter-rtc", "lock_id": "jupyter_rtc_lock"})
-    per_user = LockOwner(fake, "jupyter-rtc-rwelande")
-    shared = LockOwner(fake, "jupyter-rtc")
+    per_user = locks_for(fake, "jupyter-rtc-rwelande")
+    shared = locks_for(fake, "jupyter-rtc")
     # substring matching would wrongly claim this lock as ours
     assert per_user.foreign_lock_holder("/f") == "jupyter-rtc"
     assert shared.foreign_lock_holder("/f") is None
@@ -135,12 +135,12 @@ def test_foreign_lock_holder_exact_match(fake):
 
 def test_shared_holder_migration_makes_servers_coholders(fake):
     """With the per-user suffix off, two servers can use each other's locks."""
-    a = LockOwner(fake, "jupyter-rtc")
-    b = LockOwner(fake, "jupyter-rtc")
+    a = locks_for(fake, "jupyter-rtc")
+    b = locks_for(fake, "jupyter-rtc")
     fake.put("/f")
     assert a.acquire_or_refresh_lock("/f") == LOCK_HELD
     assert b.acquire_or_refresh_lock("/f") == LOCK_HELD  # refresh, same holder
-    b.unlock("/f", b.lock_holder, b.lock_value)
+    b.unlock("/f")
     assert "/f" not in fake.locks
 
 

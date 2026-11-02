@@ -1,9 +1,9 @@
-import asyncio
-from typing import Optional, Union
+from contextlib import contextmanager
+from typing import Iterator, Optional, Union
 import cs3.storage.provider.v1beta1.resources_pb2 as cs3spr
 from cs3client.exceptions import NotFoundException
-from tornado.web import HTTPError
-from .statuscodehandler import FileLockedError
+from .session import CS3Service, CS3Session
+from .errors import FileLockedError, translate_cs3_error
 from .utils import retry_on_auth_failure, resource_from_path
 
 # Result states of acquire_or_refresh_lock.
@@ -12,15 +12,14 @@ LOCK_FOREIGN = "foreign"
 LOCK_NO_FILE = "no_file"
 
 
-class CS3Lock:
+class CS3Locks(CS3Service):
+    """Locks taken with our own holder (lock_holder) and lock id (lock_value)."""
 
-    # Serializes reva-lock state with session-tracker state. The POST
-    # (acquire+user_seen) and DELETE (user_left+unlock) flows in the lock handler
-    # each touch two pieces of state that must move together; without this mutex a
-    # DELETE can decide to unlock between a concurrent POST's successful refresh
-    # and its user_seen increment, leaving the joining session believing it holds
-    # a lock that has already been released.
-    _lock_mutex = asyncio.Lock()
+    def __init__(self, session: CS3Session, storage, lock_holder: str, lock_value: str):
+        super().__init__(session)
+        self.storage = storage
+        self.lock_holder = lock_holder
+        self.lock_value = lock_value
 
     def acquire_or_refresh_lock(self, path: str) -> str:
         """Try to set or refresh our lock on the given path.
@@ -36,13 +35,13 @@ class CS3Lock:
         # switch. So treat any failure as "we do not hold it" and let SetLock,
         # which is authoritative, decide.
         try:
-            self.refresh_lock(path, self.lock_holder, self.lock_value, self.lock_value)
+            self.refresh_lock(path)
             return LOCK_HELD
         except OSError as e:
             self.log.debug(f"Could not refresh lock on {path}, trying to set it: {e}")
 
         try:
-            self.set_lock(path, self.lock_holder, self.lock_value)
+            self.set_lock(path)
             return LOCK_HELD
         except FileLockedError:
             return LOCK_FOREIGN
@@ -54,12 +53,12 @@ class CS3Lock:
             # SetLock hides a missing file the same way. A file that is not
             # there yet is the normal case for a first save (it gets locked
             # after creation), anything else is a genuine failure.
-            if not self.vfs_exists(path):
+            if not self.storage.exists(path):
                 return LOCK_NO_FILE
             raise
 
     def ensure_write_lock(self, os_path: str) -> str:
-        """Acquire/refresh our lock before a write; 423 if a foreign holder has it.
+        """Acquire/refresh our lock before a write; FileLockedError if a foreign holder has it.
 
         The pre-write check is the only protection on storages that do not
         enforce locks on upload (e.g. cephmount, localfs).
@@ -67,8 +66,21 @@ class CS3Lock:
         state = self.acquire_or_refresh_lock(os_path)
         if state == LOCK_FOREIGN:
             holder = self.foreign_lock_holder(os_path) or "another application"
-            raise HTTPError(423, f"{os_path} is locked by {holder}")
+            raise FileLockedError(f"{os_path} is locked by {holder}", holder=holder)
         return state
+
+    @contextmanager
+    def write_lock(self, os_path: str) -> Iterator[str]:
+        """Hold our lock around a write; FileLockedError if someone else holds it.
+
+        Yields the acquire state. LOCK_NO_FILE means the write creates the
+        file, which cannot be locked before it exists: it is locked right after
+        a successful write instead.
+        """
+        state = self.ensure_write_lock(os_path)
+        yield state
+        if state == LOCK_NO_FILE:
+            self.lock_after_create(os_path)
 
     def lock_after_create(self, os_path: str) -> None:
         """Best-effort lock of a file we just created.
@@ -77,7 +89,7 @@ class CS3Lock:
         race in between, the next write fails cleanly with 423.
         """
         try:
-            self.set_lock(os_path, self.lock_holder, self.lock_value)
+            self.set_lock(os_path)
         except OSError as e:
             # Best effort by design: the content is already written, and a
             # subsequent save fails cleanly with 423 if someone else won.
@@ -100,27 +112,25 @@ class CS3Lock:
         return None
 
     @retry_on_auth_failure
-    def unlock(self, path: str, app_name: str, lock_id: Union[str, int]) -> None:
-        """Unlock a file."""
+    def unlock(self, path: str) -> None:
+        """Release our lock on a file."""
         try:
-            resource = resource_from_path(path)
-            return self.client.file.unlock(
+            self.client.file.unlock(
                 self.auth.get_token(),
-                resource,
-                app_name,
-                lock_id
+                resource_from_path(path),
+                self.lock_holder,
+                self.lock_value
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
     def get_lock(self, path: str) -> Union[cs3spr.Lock, dict, None]:
-        """Get locks for a file."""
+        """Get the lock on a file, None if there is none."""
         try:
-            resource = resource_from_path(path)
             return self.client.file.get_lock(
                 self.auth.get_token(),
-                resource
+                resource_from_path(path)
             )
         # GetLock returns NotFound if there's no lock (or no file).
         except NotFoundException:
@@ -128,33 +138,31 @@ class CS3Lock:
         except FileNotFoundError:
             return None
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
-    def refresh_lock(self, path: str, app_name: str, lock_id: Union[str, int], existing_lock_id: Union[str, int]) -> None:
-        """Refresh a file lock."""
+    def refresh_lock(self, path: str) -> None:
+        """Extend our lock on a file; fails unless we hold it."""
         try:
-            resource = resource_from_path(path)
-            return self.client.file.refresh_lock(
+            self.client.file.refresh_lock(
                 self.auth.get_token(),
-                resource,
-                app_name,
-                lock_id,
-                existing_lock_id
+                resource_from_path(path),
+                self.lock_holder,
+                self.lock_value,
+                self.lock_value
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)
 
     @retry_on_auth_failure
-    def set_lock(self, path: str, app_name: str, lock_id: Union[str, int]) -> None:
-        """Set a file lock."""
+    def set_lock(self, path: str) -> None:
+        """Lock a file; FileLockedError if it is locked already."""
         try:
-            resource = resource_from_path(path)
-            return self.client.file.set_lock(
+            self.client.file.set_lock(
                 self.auth.get_token(),
-                resource,
-                app_name,
-                lock_id,
+                resource_from_path(path),
+                self.lock_holder,
+                self.lock_value,
             )
         except Exception as e:
-            self.status_handler.handle_errors(e)
+            translate_cs3_error(e)

@@ -7,6 +7,7 @@ import { fileIcon, folderIcon } from '@jupyterlab/ui-components';
 import { Share, ByMeRegularShare, fetchShares } from './shares';
 import { openEditShareModal } from './share-edit-modal';
 import { CERNBOX_LOGO_SVG, SharedWithMeIcon, SharedByMeIcon, SharedPubliclyIcon } from './icons';
+import { LOG_PREFIX } from './constants';
 
 interface FileTypeRegistry {
   getFileTypesForPath(
@@ -24,11 +25,19 @@ const TABS: { id: TabId; label: string; icon: React.ReactElement }[] = [
 
 function FileTypeIcon({ share, registry }: { share: Share; registry: FileTypeRegistry }) {
   if (share.resourceType !== 'RESOURCE_TYPE_FILE') {
-    return <span className="swan-shares-item-icon"><folderIcon.react stylesheet="listing" /></span>;
+    return (
+      <span className="swan-shares-item-icon">
+        <folderIcon.react stylesheet="listing" />
+      </span>
+    );
   }
   const fileTypes = registry.getFileTypesForPath(share.name);
   const Icon = fileTypes.length > 0 && fileTypes[0].icon ? fileTypes[0].icon.react : fileIcon.react;
-  return <span className="swan-shares-item-icon"><Icon stylesheet="listing" /></span>;
+  return (
+    <span className="swan-shares-item-icon">
+      <Icon stylesheet="listing" />
+    </span>
+  );
 }
 
 function ShareItem({
@@ -133,7 +142,7 @@ function SharesPanel({
         shell.activateById(fileBrowser.id);
       }
     } catch (err) {
-      console.error(`[cs3org/cs3-jupyter:shares] Failed to open ${share.path}:`, err);
+      console.error(`${LOG_PREFIX} Failed to open ${share.path}:`, err);
     }
   };
 
@@ -191,7 +200,7 @@ function SharesPanel({
           !error &&
           filtered.map(share => (
             <ShareItem
-              key={`${share.shareDirection}-${share.shareType}-${share.resourceOpaueId}`}
+              key={`${share.shareDirection}-${share.shareType}-${share.resourceOpaqueId}`}
               share={share}
               registry={registry}
               onNavigate={navigateToShare}

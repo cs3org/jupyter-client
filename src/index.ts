@@ -7,6 +7,8 @@ import { SpacesWidget } from './spaces-widget';
 import { openEditShareModal } from './share-edit-modal';
 import { attachQuotaIndicator } from './quota-widget';
 import { DocumentLockTracker } from './locking';
+import { LOG_PREFIX, PACKAGE_NAME } from './constants';
+import { toStoragePath } from './paths';
 
 /**
  * The Shares plugin.
@@ -16,7 +18,7 @@ import { DocumentLockTracker } from './locking';
  * to the corresponding EOS path.
  */
 const sharesPlugin: JupyterFrontEndPlugin<void> = {
-  id: '@cs3org/cs3-jupyter:shares',
+  id: `${PACKAGE_NAME}:shares`,
   description: 'Browse CERNBox shared folders from the JupyterLab sidebar',
   autoStart: true,
   requires: [IDefaultFileBrowser, IDocumentManager],
@@ -27,7 +29,7 @@ const sharesPlugin: JupyterFrontEndPlugin<void> = {
     docManager: IDocumentManager,
     labShell: ILabShell | null
   ) => {
-    console.log('[cs3org/cs3-jupyter] Activating shares plugin');
+    console.log(`${LOG_PREFIX} Activating shares plugin`);
 
     const widget = new SharesWidget(fileBrowser, app.shell, app.commands, docManager.registry);
     widget.title.icon = shareIcon;
@@ -38,7 +40,7 @@ const sharesPlugin: JupyterFrontEndPlugin<void> = {
       app.shell.add(widget, 'left');
     }
 
-    const SHARE_COMMAND = '@cs3org/cs3-jupyter:share-file';
+    const SHARE_COMMAND = `${PACKAGE_NAME}:share-file`;
 
     app.commands.addCommand(SHARE_COMMAND, {
       label: 'Share',
@@ -47,8 +49,7 @@ const sharesPlugin: JupyterFrontEndPlugin<void> = {
         const item = fileBrowser.selectedItems().next();
         if (item.done || !item.value) return;
         const selected = item.value;
-        const rawPath = '/eos/' + selected.path; // TODO: Don't hardcode this prefix
-        openEditShareModal({ name: selected.name, rawPath }, () => widget.refresh());
+        openEditShareModal({ name: selected.name, rawPath: toStoragePath(selected.path) }, () => widget.refresh());
       }
     });
 
@@ -68,13 +69,13 @@ const sharesPlugin: JupyterFrontEndPlugin<void> = {
  * to the corresponding EOS path.
  */
 const spacesPlugin: JupyterFrontEndPlugin<void> = {
-  id: '@cs3org/cs3-jupyter-client:spaces',
+  id: `${PACKAGE_NAME}:spaces`,
   description: 'Navigate CERNBox Spaces from the JupyterLab sidebar',
   autoStart: true,
   requires: [IDefaultFileBrowser],
   optional: [ILabShell],
   activate: (app: JupyterFrontEnd, fileBrowser: IDefaultFileBrowser, labShell: ILabShell | null) => {
-    console.log('[cs3org/cs3-jupyter-client] Activating spaces plugin');
+    console.log(`${LOG_PREFIX} Activating spaces plugin`);
 
     const widget = new SpacesWidget(fileBrowser, app.shell);
     widget.title.icon = spacesIcon;
@@ -94,12 +95,12 @@ const spacesPlugin: JupyterFrontEndPlugin<void> = {
  * showing the user's CERNBox storage usage.
  */
 const quotaPlugin: JupyterFrontEndPlugin<void> = {
-  id: '@cs3org/cs3-jupyter-client:quota',
+  id: `${PACKAGE_NAME}:quota`,
   description: 'CERNBox storage quota indicator in the file browser',
   autoStart: true,
   requires: [IDefaultFileBrowser],
   activate: (app: JupyterFrontEnd, fileBrowser: IDefaultFileBrowser) => {
-    console.log('[cs3org/cs3-jupyter-client] Activating quota plugin');
+    console.log(`${LOG_PREFIX} Activating quota plugin`);
     attachQuotaIndicator(fileBrowser);
   }
 };
@@ -113,12 +114,12 @@ const quotaPlugin: JupyterFrontEndPlugin<void> = {
  * as someone has it open and released when the last session leaves.
  */
 const lockingPlugin: JupyterFrontEndPlugin<void> = {
-  id: '@cs3org/cs3-jupyter-client:locking',
+  id: `${PACKAGE_NAME}:locking`,
   description: 'Hold CS3 locks on open documents via the /cs3/lock endpoint',
   autoStart: true,
   requires: [IDocumentWidgetOpener],
   activate: (app: JupyterFrontEnd, opener: IDocumentWidgetOpener) => {
-    console.log('[cs3org/cs3-jupyter-client] Activating locking plugin');
+    console.log(`${LOG_PREFIX} Activating locking plugin`);
 
     const tracker = new DocumentLockTracker();
     void tracker.initialize();
