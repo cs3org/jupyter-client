@@ -1,6 +1,6 @@
 import { ServerConnection } from '@jupyterlab/services';
 
-interface ISpaceResponse {
+interface SpaceResponse {
   id: {
     opaque_id: string;
   };
@@ -15,11 +15,11 @@ interface ISpaceResponse {
   };
 }
 
-interface ISpacesResponse {
-  spaces: ISpaceResponse[];
+interface SpacesResponse {
+  spaces: SpaceResponse[];
 }
 
-export interface ISpace {
+export interface Space {
   id: string;
   name: string;
   description?: string;
@@ -37,7 +37,7 @@ export interface ISpace {
 /**
  * Fetch the list of spaces the current user has access to.
  */
-export async function fetchSpaces(): Promise<ISpace[] | null> {
+export async function fetchSpaces(): Promise<Space[] | null> {
   const settings = ServerConnection.makeSettings();
   let resp;
   try {
@@ -52,7 +52,7 @@ export async function fetchSpaces(): Promise<ISpace[] | null> {
     return null;
   }
 
-  let data: ISpacesResponse;
+  let data: SpacesResponse;
   try {
     data = await resp.json();
   } catch {
