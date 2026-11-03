@@ -4,14 +4,12 @@ from ..sharing_client import CS3SharingClient
 from .sharing import default_handlers as sharing_handlers
 from .lock import default_handlers as lock_handlers
 from .users import default_handlers as users_handlers
-from .storage import default_handlers as storage_handlers
 
 
 default_handlers = [
     *sharing_handlers,
     *lock_handlers,
     *users_handlers,
-    *storage_handlers,
 ]
 
 
