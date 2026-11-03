@@ -139,6 +139,16 @@ class CS3VirtualFileSystem:
         """Check if path is absolute."""
         return path.startswith(self.root_path)
 
+    def relative_path(self, path: str) -> str:
+        """Get the path relative to the root_path
+
+        Example:
+            root_path = "/eos"
+            path = "/eos/user/j/john"
+            -> relative = "user/j/john"
+        """
+        return os.path.relpath(path, start=self.root_path)
+
     def abs_path(self, path: str) -> str:
         return path
 
