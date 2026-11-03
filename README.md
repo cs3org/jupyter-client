@@ -67,10 +67,10 @@ pip install -e .
 
 ### Labextension Development
 
-```bash
-# Create fake EOS directories for testing
-./setup-fake-eos.sh ./fake-eos
+Make sure EOS is mounted and accessible under `/eos` on your local machine, then install the package
+in dev mode:
 
+```bash
 # Install the extension (pip install -e . also builds the labextension)
 pip install -e .
 
@@ -83,10 +83,7 @@ pip install -e .
 jupyter labextension list
 
 # Start JupyterLab
-jupyter lab \
-    --ServerApp.root_dir='./fake-eos' \
-    --FileContentsManager.preferred_dir='user/<u>/<user>' \
-    --ServerApp.token=''
+jupyter lab --config=jupyter_server_config.py
 ```
 
 ## Configuration
@@ -113,6 +110,14 @@ c.CS3Mixin.lock_by_setting_attr = False
 c.CS3Mixin.root_path = '/eos/user/r/rwelande'
 c.CS3Mixin.client_id = 'rwelande'
 c.CS3LargeFileManager.max_copy_folder_size_mb = 500
+
+def storage_path_from_user(user: str) -> str:
+    return f'/eos/user/{user[0]}/{user}'
+
+c.CS3Mixin.storage_path_from_user = storage_path_from_user
+
+c.ServerApp.root_dir = '/eos'
+c.FileContentsManager.preferred_dir='user/<u>/<user>'
 ```
 
 Configure the traits on `CS3Mixin`: it is the only class in the MRO of both
