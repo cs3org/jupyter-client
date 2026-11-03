@@ -6,11 +6,12 @@ from jupyter_server.utils import url_path_join
 from google.protobuf.json_format import MessageToDict
 from ..cs3vfs.statuscodehandler import ErrorToHttpCode
 from .utils import cache_get_user_info
+from cs3_jupyter.cs3mixin import CS3Mixin
 
 class _CS3HandlerBase(APIHandler):
 
     @property
-    def cs3(self):
+    def cs3(self) -> CS3Mixin:
         return self.settings["cs3_sharing_client"]
 
 
