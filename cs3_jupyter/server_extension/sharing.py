@@ -395,7 +395,23 @@ class GetSpaceHandler(_CS3HandlerBase):
             for s in spaces
         ]
         self.set_header("Content-Type", "application/json")
-        self.write({"spaces": spaces_list})
+        self.write({"spaces": self._inject_relative_paths(spaces_list)})
+
+    def _inject_relative_paths(self, spaces: list) -> list:
+        """
+        The frontend needs paths relative to the root dir for navigation.
+        This attaches the relative path alongside the absolute path.
+        """
+        return [
+            {
+                **space,
+                "root_info": {
+                    **space["root_info"],
+                    "relative_path": self.cs3.relative_path(space["root_info"]["path"]),
+                },
+            }
+            for space in spaces
+        ]
 
 
 default_handlers = [
