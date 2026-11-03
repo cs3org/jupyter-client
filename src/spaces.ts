@@ -11,7 +11,7 @@ interface SpaceResponse {
     remaining_bytes: number;
   };
   root_info: {
-    path: string;
+    relative_path: string;
   };
 }
 
@@ -28,7 +28,7 @@ export interface Space {
     remainingBytes: number;
   };
   /**
-   * Path relative to the ContentsManager root_dir (e.g. /eos).
+   * Path relative to the ContentsManager root_dir (e.g. /eos) including the slash
    * Example: "/project/a/atlas-analysis"
    */
   path: string;
@@ -68,6 +68,6 @@ export async function fetchSpaces(): Promise<Space[] | null> {
       maxBytes: space.quota.quota_max_bytes,
       remainingBytes: space.quota.remaining_bytes
     },
-    path: space.root_info.path.slice('/eos'.length) // TODO: Don't hardcode this prefix
+    path: `/${space.root_info.relative_path}`
   }));
 }
