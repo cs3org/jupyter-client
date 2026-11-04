@@ -32,7 +32,7 @@ function GranteeItem({
         <span className="swan-shares-grantee-icon" title={grantee.type === 'GRANTEE_TYPE_USER' ? 'User' : 'Group'}>
           {grantee.type === 'GRANTEE_TYPE_USER' ? UserEmoji : GroupEmoji}
         </span>
-        <span className="swan-shares-grantee-name">{grantee.opaqueId}</span>
+        <span className="swan-shares-grantee-name">{grantee.displayName ?? grantee.opaqueId}</span>
       </div>
       <button className="swan-shares-grantee-remove" title="Remove" onClick={() => onRemove(grantee.shareId)}>
         {TrashIcon}
