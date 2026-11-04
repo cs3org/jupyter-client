@@ -52,9 +52,9 @@ function ShareItem({
 }) {
   let meta = '';
   if (share.shareDirection === 'WITH_ME' && share.sharedBy) {
-    meta = `from ${share.sharedBy}`;
+    meta = `from ${share.sharedBy.displayName || share.sharedBy.opaqueId}`;
   } else if (share.shareDirection === 'BY_ME' && share.shareType === 'REGULAR' && share.sharedWith.length > 0) {
-    meta = `with ${share.sharedWith.map(g => g.opaqueId).join(', ')}`;
+    meta = `with ${share.sharedWith.map(g => ('displayName' in g ? g.displayName : g.opaqueId)).join(', ')}`;
   }
 
   const handleContext = (e: React.MouseEvent) => {

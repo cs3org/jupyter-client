@@ -25,14 +25,32 @@ interface RawResourceInfo {
   type?: ResourceType;
 }
 
-interface RawSharedByMeRegular {
+interface RawUserInfo {
+  id: { opaque_id: string };
+  mail: string;
+  display_name: string;
+}
+
+interface RawSharedByMeRegularUser {
   share: {
     id: { opaque_id: string };
     resource_id: { opaque_id: string };
-    grantee: RawUserGrantee | RawGroupGrantee;
+    grantee: RawUserGrantee;
+  };
+  resource_info: RawResourceInfo;
+  grantee_user_info: RawUserInfo;
+}
+
+interface RawSharedByMeRegularGroup {
+  share: {
+    id: { opaque_id: string };
+    resource_id: { opaque_id: string };
+    grantee: RawGroupGrantee;
   };
   resource_info: RawResourceInfo;
 }
+
+type RawSharedByMeRegular = RawSharedByMeRegularUser | RawSharedByMeRegularGroup;
 
 interface RawSharedByMePublic {
   public_share: {
@@ -53,11 +71,32 @@ interface RawSharedWithMe {
     };
   };
   resource_info: RawResourceInfo;
+  creator_user_info?: RawUserInfo;
 }
 
-interface Grantee {
-  type: GranteeType;
+interface InvalidGrantee {
+  type: 'GRANTEE_TYPE_INVALID';
   opaqueId: string;
+}
+
+interface GroupGrantee {
+  type: 'GRANTEE_TYPE_GROUP';
+  opaqueId: string;
+}
+
+interface UserGrantee {
+  type: 'GRANTEE_TYPE_USER';
+  opaqueId: string;
+  mail: string;
+  displayName: string;
+}
+
+type Grantee = InvalidGrantee | GroupGrantee | UserGrantee;
+
+interface Creator {
+  opaqueId: string;
+  mail?: string;
+  displayName?: string;
 }
 
 interface _Share {
@@ -83,7 +122,7 @@ interface ByMePublicShare extends _Share {
 interface WithMeRegularShare extends _Share {
   shareDirection: 'WITH_ME';
   shareType: 'REGULAR';
-  sharedBy: string;
+  sharedBy: Creator;
   role: ShareRole;
 }
 
@@ -117,6 +156,19 @@ export async function fetchShares(): Promise<Share[]> {
         ? share.share.grantee.user_id.opaque_id
         : share.share.grantee.group_id.opaque_id;
 
+    const grantee: Grantee =
+      'grantee_user_info' in share
+        ? {
+            type: 'GRANTEE_TYPE_USER',
+            opaqueId: sharedWithOpaqueId,
+            mail: share.grantee_user_info.mail,
+            displayName: share.grantee_user_info.display_name
+          }
+        : {
+            type: share.share.grantee.type,
+            opaqueId: sharedWithOpaqueId
+          };
+
     if (!byMeMerged.has(resourceId)) {
       byMeMerged.set(resourceId, {
         shareDirection: 'BY_ME',
@@ -125,18 +177,10 @@ export async function fetchShares(): Promise<Share[]> {
         resourceType: share.resource_info.type ?? 'RESOURCE_TYPE_CONTAINER',
         name: share.resource_info.name,
         path: `/${share.resource_info.relative_path}`,
-        sharedWith: [
-          {
-            type: share.share.grantee.type,
-            opaqueId: sharedWithOpaqueId
-          }
-        ]
+        sharedWith: [grantee]
       });
     } else {
-      byMeMerged.get(resourceId)?.sharedWith.push({
-        type: share.share.grantee.type,
-        opaqueId: sharedWithOpaqueId
-      });
+      byMeMerged.get(resourceId)?.sharedWith.push(grantee);
     }
   }
 
@@ -149,7 +193,7 @@ export async function fetchShares(): Promise<Share[]> {
       resourceOpaueId: share.public_share.resource_id.opaque_id,
       resourceType: share.resource_info.type ?? 'RESOURCE_TYPE_CONTAINER',
       name: share.resource_info.name,
-      path: `/${share.resource_info.relative_path}`,
+      path: `/${share.resource_info.relative_path}`
     });
   }
 
@@ -166,7 +210,11 @@ export async function fetchShares(): Promise<Share[]> {
       resourceType: share.resource_info.type ?? 'RESOURCE_TYPE_CONTAINER',
       name: share.resource_info.name,
       path: `/${share.resource_info.relative_path}`,
-      sharedBy: share.received_share.share.creator.opaque_id,
+      sharedBy: {
+        opaqueId: share.received_share.share.creator.opaque_id,
+        mail: share.creator_user_info?.mail,
+        displayName: share.creator_user_info?.display_name
+      },
       role: roleFromRawPermissions(
         (share.received_share.share as Record<string, unknown>).permissions as Record<string, unknown> | undefined
       )
@@ -184,6 +232,7 @@ export interface ShareGranteeDetail {
   type: GranteeType;
   opaqueId: string;
   role: ShareRole;
+  displayName?: string;
 }
 
 export interface UserSearchResult {
@@ -219,14 +268,20 @@ export async function fetchSharesForResource(path: string): Promise<ShareGrantee
   for (const item of data.shares as RawSharedByMeRegular[]) {
     const grantee = item.share.grantee;
     const opaqueId = grantee.type === 'GRANTEE_TYPE_USER' ? grantee.user_id.opaque_id : grantee.group_id.opaque_id;
-    results.push({
+    const detail: ShareGranteeDetail = {
       shareId: item.share.id.opaque_id,
       type: grantee.type,
       opaqueId,
       role: roleFromRawPermissions(
         (item.share as Record<string, unknown>).permissions as Record<string, unknown> | undefined
       )
-    });
+    };
+
+    if ('grantee_user_info' in item) {
+      detail.displayName = item.grantee_user_info.display_name;
+    }
+
+    results.push(detail);
   }
 
   return results;
