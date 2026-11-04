@@ -16,7 +16,7 @@ import { TrashIcon, UserEmoji, GroupEmoji } from './icons';
 
 export interface ShareTarget {
   name: string;
-  rawPath: string;
+  path: string;
 }
 
 function GranteeItem({
@@ -112,7 +112,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
         setGranteesError(null);
       }
       try {
-        const data = await fetchSharesForResource(share.rawPath);
+        const data = await fetchSharesForResource(share.path);
         setGrantees(data);
       } catch (err) {
         if (!silent) {
@@ -124,7 +124,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
         }
       }
     },
-    [share.rawPath]
+    [share.path]
   );
 
   useEffect(() => {
@@ -168,7 +168,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
   // We only support read-only (VIEWER) shares for now.
   const handleAddUser = async (user: UserSearchResult) => {
     try {
-      await createShare(share.rawPath, user.opaqueId, user.idp, 'VIEWER', 'GRANTEE_TYPE_USER');
+      await createShare(share.path, user.opaqueId, user.idp, 'VIEWER', 'GRANTEE_TYPE_USER');
       setGrantees(prev => [
         ...prev,
         { shareId: `pending-${user.opaqueId}`, type: 'GRANTEE_TYPE_USER', opaqueId: user.opaqueId, role: 'VIEWER' }
@@ -182,7 +182,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
 
   const handleAddGroup = async (group: GroupSearchResult) => {
     try {
-      await createShare(share.rawPath, group.opaqueId, '', 'VIEWER', 'GRANTEE_TYPE_GROUP');
+      await createShare(share.path, group.opaqueId, '', 'VIEWER', 'GRANTEE_TYPE_GROUP');
       setGrantees(prev => [
         ...prev,
         { shareId: `pending-${group.opaqueId}`, type: 'GRANTEE_TYPE_GROUP', opaqueId: group.opaqueId, role: 'VIEWER' }

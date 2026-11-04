@@ -21,6 +21,7 @@ export type ResourceType = 'RESOURCE_TYPE_CONTAINER' | 'RESOURCE_TYPE_FILE';
 interface RawResourceInfo {
   name: string;
   path: string;
+  relative_path: string;
   type?: ResourceType;
 }
 
@@ -66,7 +67,6 @@ interface _Share {
   resourceType: ResourceType;
   name: string;
   path: string;
-  rawPath: string;
 }
 
 export interface ByMeRegularShare extends _Share {
@@ -124,8 +124,7 @@ export async function fetchShares(): Promise<Share[]> {
         resourceOpaueId: share.share.resource_id.opaque_id,
         resourceType: share.resource_info.type ?? 'RESOURCE_TYPE_CONTAINER',
         name: share.resource_info.name,
-        path: share.resource_info.path.slice('/eos'.length), // TODO: Don't hardcode this prefix
-        rawPath: share.resource_info.path,
+        path: `/${share.resource_info.relative_path}`,
         sharedWith: [
           {
             type: share.share.grantee.type,
@@ -150,8 +149,7 @@ export async function fetchShares(): Promise<Share[]> {
       resourceOpaueId: share.public_share.resource_id.opaque_id,
       resourceType: share.resource_info.type ?? 'RESOURCE_TYPE_CONTAINER',
       name: share.resource_info.name,
-      path: share.resource_info.path.slice('/eos'.length), // TODO: Don't hardcode this prefix
-      rawPath: share.resource_info.path
+      path: `/${share.resource_info.relative_path}`,
     });
   }
 
@@ -167,8 +165,7 @@ export async function fetchShares(): Promise<Share[]> {
       resourceOpaueId: share.received_share.share.resource_id.opaque_id,
       resourceType: share.resource_info.type ?? 'RESOURCE_TYPE_CONTAINER',
       name: share.resource_info.name,
-      path: share.resource_info.path.slice('/eos'.length), // TODO: Don't hardcode this prefix
-      rawPath: share.resource_info.path,
+      path: `/${share.resource_info.relative_path}`,
       sharedBy: share.received_share.share.creator.opaque_id,
       role: roleFromRawPermissions(
         (share.received_share.share as Record<string, unknown>).permissions as Record<string, unknown> | undefined
@@ -206,9 +203,9 @@ function roleFromRawPermissions(permissions: Record<string, unknown> | undefined
   return perms?.initiate_file_upload ? 'EDITOR' : 'VIEWER';
 }
 
-export async function fetchSharesForResource(rawPath: string): Promise<ShareGranteeDetail[]> {
+export async function fetchSharesForResource(path: string): Promise<ShareGranteeDetail[]> {
   const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'cs3/shares/getSharedByResource?' + new URLSearchParams({ path: rawPath });
+  const url = settings.baseUrl + 'cs3/shares/getSharedByResource?' + new URLSearchParams({ path });
   const resp = await ServerConnection.makeRequest(url, {}, settings);
 
   if (!resp.ok) {
@@ -221,15 +218,14 @@ export async function fetchSharesForResource(rawPath: string): Promise<ShareGran
 
   for (const item of data.shares as RawSharedByMeRegular[]) {
     const grantee = item.share.grantee;
-    const opaqueId =
-      grantee.type === 'GRANTEE_TYPE_USER'
-        ? grantee.user_id.opaque_id
-        : grantee.group_id.opaque_id;
+    const opaqueId = grantee.type === 'GRANTEE_TYPE_USER' ? grantee.user_id.opaque_id : grantee.group_id.opaque_id;
     results.push({
       shareId: item.share.id.opaque_id,
       type: grantee.type,
       opaqueId,
-      role: roleFromRawPermissions((item.share as Record<string, unknown>).permissions as Record<string, unknown> | undefined)
+      role: roleFromRawPermissions(
+        (item.share as Record<string, unknown>).permissions as Record<string, unknown> | undefined
+      )
     });
   }
 
@@ -266,14 +262,14 @@ export async function updateShareRole(shareId: string, role: ShareRole): Promise
 }
 
 export async function createShare(
-  rawPath: string,
+  path: string,
   opaqueId: string,
   idp: string,
   role: ShareRole,
   granteeType: GranteeType
 ): Promise<void> {
   const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'cs3/shares?' + new URLSearchParams({ path: rawPath });
+  const url = settings.baseUrl + 'cs3/shares?' + new URLSearchParams({ path });
   const resp = await ServerConnection.makeRequest(
     url,
     {
@@ -305,7 +301,7 @@ export async function findUsers(query: string, signal?: AbortSignal): Promise<Us
   }
 
   const data = await resp.json();
-  return (data.items as Array<Record<string, unknown>>).map((u) => ({
+  return (data.items as Array<Record<string, unknown>>).map(u => ({
     opaqueId: (u.id as Record<string, string>).opaque_id,
     idp: (u.id as Record<string, string>).idp,
     displayName: (u.display_name as string) || (u.username as string) || '',
@@ -324,7 +320,7 @@ export async function findGroups(query: string, signal?: AbortSignal): Promise<G
   }
 
   const data = await resp.json();
-  return (data.items as Array<Record<string, unknown>>).map((g) => ({
+  return (data.items as Array<Record<string, unknown>>).map(g => ({
     opaqueId: (g.id as Record<string, string>).opaque_id,
     displayName: (g.group_name as string) || (g.id as Record<string, string>).opaque_id
   }));

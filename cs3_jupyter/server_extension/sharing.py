@@ -1,5 +1,6 @@
 # sharing/handlers.py
 
+import os
 from tornado import web
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
@@ -28,7 +29,7 @@ class SharesHandler(_CS3HandlerBase):
         :field grantee_type: Type of grantee, USER or GROUP (REQUIRED).
         """
         # Get the resource path from query parameters
-        path = self.get_query_argument("path", default="")
+        path = self._normalize_path(self.get_query_argument("path", default=""))
         # Get other parameters from the request body
         body = self.get_json_body() or {}
         opaque_id = body.get("opaque_id", "")
@@ -95,6 +96,12 @@ class SharesHandler(_CS3HandlerBase):
 
         self.set_status(204)
 
+    def _normalize_path(self, path: str) -> str:
+        if path.startswith(self.cs3.root_path):
+            return path
+        path = path.lstrip('/')
+        return os.path.join(self.cs3.root_path, path)
+
 class LinkHandler(_CS3HandlerBase):
 
     @web.authenticated
@@ -111,7 +118,7 @@ class LinkHandler(_CS3HandlerBase):
         :field notify_uploads_extra_recipients: List of extra recipients to notify on upload.
         """
         # Get the resource path from query parameters
-        path = self.get_query_argument("path", default="")
+        path = self._normalize_path(self.get_query_argument("path", default=""))
         # Get other parameters from the request body
         body = self.get_json_body() or {}
         role = body.get("role", "")
@@ -216,7 +223,33 @@ class LinkHandler(_CS3HandlerBase):
 
         self.set_status(204)
 
-class SharedWithMeHandler(_CS3HandlerBase):
+    def _normalize_path(self, path: str) -> str:
+        if path.startswith(self.cs3.root_path):
+            return path
+        path = path.lstrip('/')
+        return os.path.join(self.cs3.root_path, path)
+
+
+class ShareHandlerBase(_CS3HandlerBase):
+
+    def _attach_relative_paths(self, shares: list) -> list:
+        """
+        The frontend needs paths relative to the root dir for navigation.
+        This attaches the relative path alongside the absolute path.
+        """
+        return [
+            {
+                **share,
+                "resource_info": {
+                    **share["resource_info"],
+                    "relative_path": self.cs3.relative_path(share["resource_info"]["path"]),
+                },
+            }
+            for share in shares
+        ]
+
+
+class SharedWithMeHandler(ShareHandlerBase):
     @web.authenticated
     async def get(self):
         try:
@@ -230,19 +263,24 @@ class SharedWithMeHandler(_CS3HandlerBase):
             MessageToDict(s, preserving_proto_field_name=True)
             for s in shares
         ]
-        for s in shares_list:
+        shares_list = self._attach_creator(shares_list)
+        shares_list = self._attach_relative_paths(shares_list)
+
+        self.set_header("Content-Type", "application/json")
+        self.write({"shares": shares_list})
+
+    def _attach_creator(self, shares: list) -> list:
+        for s in shares:
             uid = s["received_share"]["share"]["creator"]["opaque_id"]
             if not uid:
                 continue
             info = cache_get_user_info(self.cs3, user_id=uid, log=self.log)
             if info is not None:
                 s["creator_user_info"] = info
-
-        self.set_header("Content-Type", "application/json")
-        self.write({"shares": shares_list})
+        return shares
 
 
-class SharedByMeHandler(_CS3HandlerBase):
+class SharedByMeHandler(ShareHandlerBase):
     """
     Handler for retrieving shares created by the user, both regular and public shares.
     """
@@ -260,22 +298,29 @@ class SharedByMeHandler(_CS3HandlerBase):
             MessageToDict(s, preserving_proto_field_name=True)
             for s in shares
         ]
-        for s in shares_list:
-            if s["share"]["grantee"]["type"] == "GRANTEE_TYPE_USER":
-                uid = s["share"]["grantee"]["user_id"]["opaque_id"]
-                info = cache_get_user_info(self.cs3, user_id=uid, log=self.log)
-                if info is not None:
-                    s["grantee_user_info"] = info
+        shares_list = self._attach_grantee(shares_list)
+        shares_list = self._attach_relative_paths(shares_list)
 
         public_shares_list = [
             MessageToDict(s, preserving_proto_field_name=True)
             for s in public_shares
         ]
+        public_shares_list = self._attach_relative_paths(public_shares_list)
+
         self.set_header("Content-Type", "application/json")
         self.write({"shares": shares_list, "public_shares": public_shares_list})
 
+    def _attach_grantee(self, shares: list) -> list:
+        for s in shares:
+            if s["share"]["grantee"]["type"] == "GRANTEE_TYPE_USER":
+                uid = s["share"]["grantee"]["user_id"]["opaque_id"]
+                info = cache_get_user_info(self.cs3, user_id=uid, log=self.log)
+                if info is not None:
+                    s["grantee_user_info"] = info
+        return shares
 
-class SharedByResourceHandler(_CS3HandlerBase):
+
+class SharedByResourceHandler(ShareHandlerBase):
     """
     Handler for retrieving regular and public shares created by the user for a specific resource.
     query param path: path to the resource (REQUIRED).
@@ -283,6 +328,7 @@ class SharedByResourceHandler(_CS3HandlerBase):
     @web.authenticated
     async def get(self):
         path = self.get_query_argument("path", default="")
+        path = self._normalize_path(path)
         try:
             shares, _ = self.cs3.list_existing_shares_by_resource(path)
             public_shares, _ = self.cs3.list_existing_public_shares_by_resource(path)
@@ -295,20 +341,33 @@ class SharedByResourceHandler(_CS3HandlerBase):
             MessageToDict(s, preserving_proto_field_name=True)
             for s in shares
         ]
-
-        for s in shares_list:
-            if s["share"]["grantee"]["type"] == "GRANTEE_TYPE_USER":
-                uid = s["share"]["grantee"]["user_id"]["opaque_id"]
-                info = cache_get_user_info(self.cs3, user_id=uid, log=self.log)
-                if info is not None:
-                    s["grantee_user_info"] = info
+        shares_list = self._attach_grantee(shares_list)
+        shares_list = self._attach_relative_paths(shares_list)
 
         public_shares_list = [
             MessageToDict(s, preserving_proto_field_name=True)
             for s in public_shares
         ]
+        public_shares_list = self._attach_relative_paths(public_shares_list)
+
         self.set_header("Content-Type", "application/json")
         self.write({"shares": shares_list, "public_shares": public_shares_list})
+
+    def _normalize_path(self, path: str) -> str:
+        if path.startswith(self.cs3.root_path):
+            return path
+        path = path.lstrip('/')
+        return os.path.join(self.cs3.root_path, path)
+
+    def _attach_grantee(self, shares: list) -> list:
+        for s in shares:
+            if s["share"]["grantee"]["type"] == "GRANTEE_TYPE_USER":
+                uid = s["share"]["grantee"]["user_id"]["opaque_id"]
+                info = cache_get_user_info(self.cs3, user_id=uid, log=self.log)
+                if info is not None:
+                    s["grantee_user_info"] = info
+        return shares
+
 
 class FindUsersHandler(_CS3HandlerBase):
     """
@@ -395,9 +454,9 @@ class GetSpaceHandler(_CS3HandlerBase):
             for s in spaces
         ]
         self.set_header("Content-Type", "application/json")
-        self.write({"spaces": self._inject_relative_paths(spaces_list)})
+        self.write({"spaces": self._attach_relative_paths(spaces_list)})
 
-    def _inject_relative_paths(self, spaces: list) -> list:
+    def _attach_relative_paths(self, spaces: list) -> list:
         """
         The frontend needs paths relative to the root dir for navigation.
         This attaches the relative path alongside the absolute path.
