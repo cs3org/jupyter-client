@@ -356,12 +356,14 @@ export async function findUsers(query: string, signal?: AbortSignal): Promise<Us
   }
 
   const data = await resp.json();
-  return (data.items as Array<Record<string, unknown>>).map(u => ({
-    opaqueId: (u.id as Record<string, string>).opaque_id,
-    idp: (u.id as Record<string, string>).idp,
-    displayName: (u.display_name as string) || (u.username as string) || '',
-    mail: (u.mail as string) || ''
-  }));
+  return (data.items as Array<Record<string, unknown>>)
+    .map(u => ({
+      opaqueId: (u.id as Record<string, string>).opaque_id,
+      idp: (u.id as Record<string, string>).idp,
+      displayName: (u.display_name as string) || (u.username as string) || '',
+      mail: (u.mail as string) || ''
+    }))
+    .sort(makeSearchComparator(query));
 }
 
 export async function findGroups(query: string, signal?: AbortSignal): Promise<GroupSearchResult[]> {
@@ -375,8 +377,23 @@ export async function findGroups(query: string, signal?: AbortSignal): Promise<G
   }
 
   const data = await resp.json();
-  return (data.items as Array<Record<string, unknown>>).map(g => ({
-    opaqueId: (g.id as Record<string, string>).opaque_id,
-    displayName: (g.group_name as string) || (g.id as Record<string, string>).opaque_id
-  }));
+  return (data.items as Array<Record<string, unknown>>)
+    .map(g => ({
+      opaqueId: (g.id as Record<string, string>).opaque_id,
+      displayName: (g.group_name as string) || (g.id as Record<string, string>).opaque_id
+    }))
+    .sort(makeSearchComparator(query));
+}
+
+// Custom sort function that puts exact matches on top
+function makeSearchComparator(query: string) {
+  return (a: UserSearchResult | GroupSearchResult, b: UserSearchResult | GroupSearchResult): number => {
+    if (a.opaqueId === query || a.displayName === query) {
+      return -1;
+    } else if (b.opaqueId === query || b.displayName === query) {
+      return 1;
+    } else {
+      return 0;
+    }
+  };
 }
