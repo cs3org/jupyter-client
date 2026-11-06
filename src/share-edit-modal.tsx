@@ -168,7 +168,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
   // We only support read-only (VIEWER) shares for now.
   const handleAddUser = async (user: UserSearchResult) => {
     try {
-      await createShare(share.path, user.opaqueId, user.idp, 'VIEWER', 'GRANTEE_TYPE_USER');
+      await createShare(share.path, user.opaqueId, user.idp, 'VIEWER', 'GRANTEE_TYPE_USER', user.userType);
       setGrantees(prev => [
         ...prev,
         { shareId: `pending-${user.opaqueId}`, type: 'GRANTEE_TYPE_USER', opaqueId: user.opaqueId, role: 'VIEWER' }
