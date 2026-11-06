@@ -15,7 +15,8 @@ class CS3Sharing:
     CS3 operations for sharing.
     """
     @retry_on_auth_failure
-    def create_share(self, path: str, opaque_id: str, idp: str, role: str, grantee_type: str) -> None:
+    def create_share(self, path: str, opaque_id: str, idp: str, role: str, grantee_type: str,
+                     user_type: Optional[str] = None) -> None:
         """Create a share for a given resource to a target user."""
         try:
             resource = resource_from_path(path)
@@ -32,7 +33,8 @@ class CS3Sharing:
                 opaque_id,
                 idp,
                 role,
-                grantee_type
+                grantee_type,
+                user_type=user_type
             )
             return share
         except Exception as e:

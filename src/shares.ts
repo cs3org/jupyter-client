@@ -238,6 +238,8 @@ export interface ShareGranteeDetail {
 export interface UserSearchResult {
   opaqueId: string;
   idp: string;
+  // e.g. USER_TYPE_PRIMARY or USER_TYPE_LIGHTWEIGHT, absent when the server left it unset
+  userType?: string;
   displayName: string;
   mail: string;
 }
@@ -321,7 +323,8 @@ export async function createShare(
   opaqueId: string,
   idp: string,
   role: ShareRole,
-  granteeType: GranteeType
+  granteeType: GranteeType,
+  userType?: string
 ): Promise<void> {
   const settings = ServerConnection.makeSettings();
   const url = settings.baseUrl + 'cs3/shares?' + new URLSearchParams({ path });
@@ -333,7 +336,8 @@ export async function createShare(
         opaque_id: opaqueId,
         idp,
         role,
-        grantee_type: granteeType === 'GRANTEE_TYPE_USER' ? 'USER' : 'GROUP'
+        grantee_type: granteeType === 'GRANTEE_TYPE_USER' ? 'USER' : 'GROUP',
+        user_type: userType
       })
     },
     settings
@@ -360,6 +364,7 @@ export async function findUsers(query: string, signal?: AbortSignal): Promise<Us
     .map(u => ({
       opaqueId: (u.id as Record<string, string>).opaque_id,
       idp: (u.id as Record<string, string>).idp,
+      userType: (u.id as Record<string, string>).type,
       displayName: (u.display_name as string) || (u.username as string) || '',
       mail: (u.mail as string) || ''
     }))

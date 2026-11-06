@@ -27,6 +27,7 @@ class SharesHandler(_CS3HandlerBase):
         :field idp: Identity provider, (REQUIRED).
         :field role: Role to assign to the grantee, VIEWER or EDITOR (REQUIRED).
         :field grantee_type: Type of grantee, USER or GROUP (REQUIRED).
+        :field user_type: Type of the user grantee as in its user id, e.g. USER_TYPE_PRIMARY (OPTIONAL).
         """
         # Get the resource path from query parameters
         path = self._normalize_path(self.get_query_argument("path", default=""))
@@ -36,10 +37,11 @@ class SharesHandler(_CS3HandlerBase):
         idp = body.get("idp", "")
         role = body.get("role", "")
         grantee_type = body.get("grantee_type", "USER")
+        user_type = body.get("user_type")
 
-        self.log.info(f"Creating share for path: {path} to {grantee_type} {opaque_id} with role {role}")
+        self.log.info(f"Creating share for path: {path} to {grantee_type} {opaque_id} ({user_type}) with role {role}")
         try:
-            share = self.cs3.create_share(path, opaque_id, idp, role, grantee_type)
+            share = self.cs3.create_share(path, opaque_id, idp, role, grantee_type, user_type=user_type)
         except Exception as e:
             http_code = ErrorToHttpCode().map_exception_to_http_code(e)
             self.set_status(http_code)
