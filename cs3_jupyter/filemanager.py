@@ -91,6 +91,16 @@ class CS3FileContentsManager(CS3FileManagerMixin):
             self.log.error("Failed to check write permissions on %s", os_path)
             return False
 
+    # Upstream stats the path on the local disk. Where something is mounted at
+    # the same path (EOS FUSE on a SWAN node or a laptop), that is not the
+    # storage we serve, and a permission error there fails the whole request.
+    async def is_hidden(self, path):
+        """Is path a hidden directory or file"""
+        path = path.lstrip("/")
+        os_path = self._get_os_path(path=path)
+        ## replaced is_hidden with implementation above class
+        return is_hidden(os_path, self.root_dir)
+
     # Lock ownership is surfaced in the models so foreign-locked files render
     # read-only. Only checked when content is requested (opening the document);
     # metadata-only gets stay a single stat.
