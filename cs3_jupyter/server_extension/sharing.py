@@ -150,7 +150,7 @@ class LinkHandler(_CS3HandlerBase):
         share = MessageToDict(share, preserving_proto_field_name=True)
 
         self.set_status(201)
-        self.write({"created": True, "data": body, "path": path, "share": share})
+        self.write({"created": True, "data": body, "path": path, "share": share, "url": share.get("url", "")})
 
     @web.authenticated
     async def put(self):
@@ -349,6 +349,8 @@ class SharedByResourceHandler(ShareHandlerBase):
             for s in public_shares
         ]
         public_shares_list = self._attach_relative_paths(public_shares_list)
+        for s in public_shares_list:
+            s["url"] = s["public_share"].get("url", "")
 
         self.set_header("Content-Type", "application/json")
         self.write({"shares": shares_list, "public_shares": public_shares_list})
