@@ -5,6 +5,7 @@ import {
   ShareGranteeDetail,
   UserSearchResult,
   GroupSearchResult,
+  UserType,
   fetchSharesForResource,
   removeShare,
   createShare,
@@ -18,6 +19,14 @@ export interface ShareTarget {
   name: string;
   path: string;
 }
+
+// The kinds of accounts to search, with the labels of the CERNBox web. Groups only come with primary users.
+const SEARCH_FILTERS: { userType: UserType; label: string; withGroups: boolean }[] = [
+  { userType: 'USER_TYPE_PRIMARY', label: 'Primary users and groups', withGroups: true },
+  { userType: 'USER_TYPE_SECONDARY', label: 'Secondary accounts', withGroups: false },
+  { userType: 'USER_TYPE_SERVICE', label: 'Service accounts', withGroups: false },
+  { userType: 'USER_TYPE_LIGHTWEIGHT', label: 'External users', withGroups: false }
+];
 
 function GranteeItem({
   grantee,
@@ -90,6 +99,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
   const [granteesLoading, setGranteesLoading] = useState(true);
   const [granteesError, setGranteesError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [searchFilter, setSearchFilter] = useState(SEARCH_FILTERS[0]);
   const [searchResults, setSearchResults] = useState<{ users: UserSearchResult[]; groups: GroupSearchResult[] } | null>(
     null
   );
@@ -142,7 +152,10 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
     fetcher.run(async signal => {
       setSearchLoading(true);
       try {
-        const [users, groups] = await Promise.all([findUsers(query, signal), findGroups(query, signal)]);
+        const [users, groups] = await Promise.all([
+          findUsers(query, searchFilter.userType, signal),
+          searchFilter.withGroups ? findGroups(query, signal) : []
+        ]);
         setSearchResults({ users, groups });
         setSearchError(null);
       } catch (err) {
@@ -154,7 +167,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
       }
     });
     return fetcher.cancel;
-  }, [searchQuery, fetcher]);
+  }, [searchQuery, searchFilter, fetcher]);
 
   const handleRemove = async (shareId: string) => {
     try {
@@ -214,13 +227,27 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
           <div className="swan-shares-modal-section">
             <div className="swan-shares-modal-section-title">Share with people</div>
             <div className="swan-shares-search-container">
-              <input
-                className="swan-shares-search-input"
-                type="text"
-                placeholder="Search users or groups..."
-                value={searchQuery}
-                onChange={e => setSearchQuery(e.target.value)}
-              />
+              <div className="swan-shares-search-row">
+                <input
+                  className="swan-shares-search-input"
+                  type="text"
+                  placeholder={searchFilter.withGroups ? 'Search users or groups...' : 'Search users...'}
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                />
+                <select
+                  className="swan-shares-search-filter"
+                  title="Kind of account to search"
+                  value={searchFilter.userType}
+                  onChange={e => setSearchFilter(SEARCH_FILTERS.find(f => f.userType === e.target.value)!)}
+                >
+                  {SEARCH_FILTERS.map(f => (
+                    <option key={f.userType} value={f.userType}>
+                      {f.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
               <div className="swan-shares-search-results">
                 {searchLoading && <div className="swan-shares-modal-empty">Searching...</div>}
                 {searchError && (
