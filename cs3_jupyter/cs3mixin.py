@@ -106,6 +106,11 @@ class CS3Mixin(CS3VirtualFileSystem, CS3Groups, CS3Users, CS3Spaces, CS3Sharing,
     lock_not_impl = Bool(default_value=False, config=True, help="Lock not implemented flag")
     lock_by_setting_attr = Bool(default_value=False, config=True, help="Fall back to advisory xattr locks when the storage does not implement locking")
     client_id = Unicode(default_value="", config=True, help="CS3 client ID (can be set in config)")
+    web_url = Unicode(
+        default_value="https://cernbox.cern.ch",
+        config=True,
+        help="URL of the web frontend. Public links point to <web_url>/s/<token>",
+    )
     storage_path_from_user = Callable(
         default_value=lambda user: user,
         config=True,
