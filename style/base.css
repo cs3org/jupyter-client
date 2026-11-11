@@ -527,7 +527,13 @@
   gap: 6px;
 }
 
-.swan-shares-search-input {
+.swan-shares-search-row {
+  display: flex;
+  gap: 6px;
+}
+
+.swan-shares-search-input,
+.swan-shares-search-filter {
   padding: 6px 10px;
   border: 1px solid var(--jp-border-color1);
   border-radius: var(--jp-border-radius);
@@ -538,7 +544,17 @@
   transition: border-color 0.15s;
 }
 
-.swan-shares-search-input:focus {
+.swan-shares-search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.swan-shares-search-filter {
+  cursor: pointer;
+}
+
+.swan-shares-search-input:focus,
+.swan-shares-search-filter:focus {
   border-color: var(--jp-brand-color1);
 }
 
