@@ -6,6 +6,7 @@ import {
   UserSearchResult,
   GroupSearchResult,
   UserType,
+  ShareRole,
   PublicLinkDetail,
   fetchSharesForResource,
   removeShare,
@@ -16,7 +17,7 @@ import {
   findGroups
 } from './shares';
 import { createDebouncedFetcher } from './debounce';
-import { TrashIcon, UserEmoji, GroupEmoji, SharedPubliclyIcon } from './icons';
+import { CopyIcon, TrashIcon, UserEmoji, GroupEmoji, SharedPubliclyIcon } from './icons';
 
 export interface ShareTarget {
   name: string;
@@ -30,6 +31,21 @@ const SEARCH_FILTERS: { userType: UserType; label: string; withGroups: boolean }
   { userType: 'USER_TYPE_SERVICE', label: 'Service accounts', withGroups: false },
   { userType: 'USER_TYPE_LIGHTWEIGHT', label: 'External users', withGroups: false }
 ];
+
+// The labels the CERNBox web gives these roles.
+const ROLE_LABELS: Record<ShareRole, string> = { VIEWER: 'Can view', EDITOR: 'Can edit' };
+
+function RoleSelect({ role, onChange }: { role: ShareRole; onChange: (role: ShareRole) => void }) {
+  return (
+    <select className="swan-shares-role-select" value={role} onChange={e => onChange(e.target.value as ShareRole)}>
+      {(Object.keys(ROLE_LABELS) as ShareRole[]).map(r => (
+        <option key={r} value={r}>
+          {ROLE_LABELS[r]}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 function GranteeItem({
   grantee,
@@ -46,6 +62,7 @@ function GranteeItem({
         </span>
         <span className="swan-shares-grantee-name">{grantee.displayName ?? grantee.opaqueId}</span>
       </div>
+      <span className="swan-shares-grantee-role">{ROLE_LABELS[grantee.role]}</span>
       <button className="swan-shares-grantee-remove" title="Remove" onClick={() => onRemove(grantee.shareId)}>
         {TrashIcon}
       </button>
@@ -71,8 +88,9 @@ function LinkItem({
         <span className="swan-shares-grantee-name">{link.displayName || 'Unnamed link'}</span>
       </div>
       <div className="swan-shares-link-actions">
-        <button className="swan-shares-search-result-add" onClick={() => onCopy(link.url)}>
-          Copy link
+        <span className="swan-shares-grantee-role">{ROLE_LABELS[link.role]}</span>
+        <button className="swan-shares-link-copy" title="Copy link" onClick={() => onCopy(link.url)}>
+          {CopyIcon}
         </button>
         <button className="swan-shares-grantee-remove" title="Delete link" onClick={() => onRemove(link.shareId)}>
           {TrashIcon}
@@ -130,6 +148,8 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
   const [grantees, setGrantees] = useState<ShareGranteeDetail[]>([]);
   const [links, setLinks] = useState<PublicLinkDetail[]>([]);
   const [creatingLink, setCreatingLink] = useState(false);
+  const [shareRole, setShareRole] = useState<ShareRole>('VIEWER');
+  const [linkRole, setLinkRole] = useState<ShareRole>('VIEWER');
   const [granteesLoading, setGranteesLoading] = useState(true);
   const [granteesError, setGranteesError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -213,13 +233,12 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
     }
   };
 
-  // We only support read-only (VIEWER) shares for now.
   const handleAddUser = async (user: UserSearchResult) => {
     try {
-      await createShare(share.path, user.opaqueId, user.idp, 'VIEWER', 'GRANTEE_TYPE_USER');
+      await createShare(share.path, user.opaqueId, user.idp, shareRole, 'GRANTEE_TYPE_USER');
       setGrantees(prev => [
         ...prev,
-        { shareId: `pending-${user.opaqueId}`, type: 'GRANTEE_TYPE_USER', opaqueId: user.opaqueId, role: 'VIEWER' }
+        { shareId: `pending-${user.opaqueId}`, type: 'GRANTEE_TYPE_USER', opaqueId: user.opaqueId, role: shareRole }
       ]);
       loadGrantees(true);
     } catch (err) {
@@ -237,11 +256,10 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
     }
   };
 
-  // Like regular shares, links are read-only (VIEWER) for now.
   const handleCreateLink = async () => {
     setCreatingLink(true);
     try {
-      const url = await createPublicLink(share.path, 'VIEWER');
+      const url = await createPublicLink(share.path, linkRole);
       loadGrantees(true);
       await copyLink(url);
     } catch (err) {
@@ -263,10 +281,10 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
 
   const handleAddGroup = async (group: GroupSearchResult) => {
     try {
-      await createShare(share.path, group.opaqueId, '', 'VIEWER', 'GRANTEE_TYPE_GROUP');
+      await createShare(share.path, group.opaqueId, '', shareRole, 'GRANTEE_TYPE_GROUP');
       setGrantees(prev => [
         ...prev,
-        { shareId: `pending-${group.opaqueId}`, type: 'GRANTEE_TYPE_GROUP', opaqueId: group.opaqueId, role: 'VIEWER' }
+        { shareId: `pending-${group.opaqueId}`, type: 'GRANTEE_TYPE_GROUP', opaqueId: group.opaqueId, role: shareRole }
       ]);
       loadGrantees(true);
     } catch (err) {
@@ -295,14 +313,15 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
           <div className="swan-shares-modal-section">
             <div className="swan-shares-modal-section-title">Share with people</div>
             <div className="swan-shares-search-container">
-              <div className="swan-shares-search-row">
-                <input
-                  className="swan-shares-search-input"
-                  type="text"
-                  placeholder={searchFilter.withGroups ? 'Search users or groups...' : 'Search users...'}
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
-                />
+              <input
+                className="swan-shares-search-input"
+                type="text"
+                placeholder={searchFilter.withGroups ? 'Search users or groups...' : 'Search users...'}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+              />
+              {/* The role sits on the right, above the Add buttons it applies to */}
+              <div className="swan-shares-search-options">
                 <select
                   className="swan-shares-search-filter"
                   title="Kind of account to search"
@@ -315,6 +334,7 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
                     </option>
                   ))}
                 </select>
+                <RoleSelect role={shareRole} onChange={setShareRole} />
               </div>
               <div className="swan-shares-search-results">
                 {searchLoading && <div className="swan-shares-modal-empty">Searching...</div>}
@@ -375,9 +395,12 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
           <div className="swan-shares-modal-section">
             <div className="swan-shares-modal-section-header">
               <div className="swan-shares-modal-section-title">Share publicly</div>
-              <button className="swan-shares-search-result-add" disabled={creatingLink} onClick={handleCreateLink}>
-                {creatingLink ? 'Adding...' : 'Add link'}
-              </button>
+              <div className="swan-shares-link-actions">
+                <RoleSelect role={linkRole} onChange={setLinkRole} />
+                <button className="swan-shares-search-result-add" disabled={creatingLink} onClick={handleCreateLink}>
+                  {creatingLink ? 'Adding...' : 'Add link'}
+                </button>
+              </div>
             </div>
             {!granteesLoading && !granteesError && links.length > 0 && (
               <div className="swan-shares-grantee-list">
