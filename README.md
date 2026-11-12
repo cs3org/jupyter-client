@@ -109,6 +109,8 @@ c.CS3Mixin.lock_not_impl = False
 c.CS3Mixin.lock_by_setting_attr = False
 c.CS3Mixin.root_path = '/eos/user/r/rwelande'
 c.CS3Mixin.client_id = 'rwelande'
+# Public links point to <web_url>/s/<token>
+c.CS3Mixin.web_url = 'https://cernbox.cern.ch'
 c.CS3LargeFileManager.max_copy_folder_size_mb = 500
 
 def storage_path_from_user(user: str) -> str:

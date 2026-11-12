@@ -6,14 +6,17 @@ import {
   UserSearchResult,
   GroupSearchResult,
   UserType,
+  PublicLinkDetail,
   fetchSharesForResource,
   removeShare,
   createShare,
+  createPublicLink,
+  removePublicLink,
   findUsers,
   findGroups
 } from './shares';
 import { createDebouncedFetcher } from './debounce';
-import { TrashIcon, UserEmoji, GroupEmoji } from './icons';
+import { TrashIcon, UserEmoji, GroupEmoji, SharedPubliclyIcon } from './icons';
 
 export interface ShareTarget {
   name: string;
@@ -46,6 +49,35 @@ function GranteeItem({
       <button className="swan-shares-grantee-remove" title="Remove" onClick={() => onRemove(grantee.shareId)}>
         {TrashIcon}
       </button>
+    </div>
+  );
+}
+
+function LinkItem({
+  link,
+  onCopy,
+  onRemove
+}: {
+  link: PublicLinkDetail;
+  onCopy: (url: string) => Promise<void>;
+  onRemove: (shareId: string) => Promise<void>;
+}) {
+  return (
+    <div className="swan-shares-grantee-item">
+      <div className="swan-shares-grantee-info">
+        <span className="swan-shares-grantee-icon" title="Public link">
+          {SharedPubliclyIcon}
+        </span>
+        <span className="swan-shares-grantee-name">{link.displayName || 'Unnamed link'}</span>
+      </div>
+      <div className="swan-shares-link-actions">
+        <button className="swan-shares-search-result-add" onClick={() => onCopy(link.url)}>
+          Copy link
+        </button>
+        <button className="swan-shares-grantee-remove" title="Delete link" onClick={() => onRemove(link.shareId)}>
+          {TrashIcon}
+        </button>
+      </div>
     </div>
   );
 }
@@ -96,6 +128,8 @@ function SearchResultItem({
 
 function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose: () => void }) {
   const [grantees, setGrantees] = useState<ShareGranteeDetail[]>([]);
+  const [links, setLinks] = useState<PublicLinkDetail[]>([]);
+  const [creatingLink, setCreatingLink] = useState(false);
   const [granteesLoading, setGranteesLoading] = useState(true);
   const [granteesError, setGranteesError] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -123,7 +157,8 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
       }
       try {
         const data = await fetchSharesForResource(share.path);
-        setGrantees(data);
+        setGrantees(data.grantees);
+        setLinks(data.links);
       } catch (err) {
         if (!silent) {
           setGranteesError(err instanceof Error ? err.message : 'Failed to load');
@@ -190,6 +225,39 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
     } catch (err) {
       showStatus(`Failed to add: ${err instanceof Error ? err.message : 'Unknown error'}`, true);
       throw err;
+    }
+  };
+
+  const copyLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      showStatus('The link has been copied to your clipboard.');
+    } catch {
+      showStatus(`Could not copy the link: ${url}`, true);
+    }
+  };
+
+  // Like regular shares, links are read-only (VIEWER) for now.
+  const handleCreateLink = async () => {
+    setCreatingLink(true);
+    try {
+      const url = await createPublicLink(share.path, 'VIEWER');
+      loadGrantees(true);
+      await copyLink(url);
+    } catch (err) {
+      showStatus(`Failed to create link: ${err instanceof Error ? err.message : 'Unknown error'}`, true);
+    } finally {
+      setCreatingLink(false);
+    }
+  };
+
+  const handleRemoveLink = async (shareId: string) => {
+    try {
+      await removePublicLink(shareId);
+      setLinks(prev => prev.filter(l => l.shareId !== shareId));
+      showStatus('Link was deleted successfully');
+    } catch (err) {
+      showStatus(`Failed to delete link: ${err instanceof Error ? err.message : 'Unknown error'}`, true);
     }
   };
 
@@ -303,6 +371,22 @@ function EditShareModalContent({ share, onClose }: { share: ShareTarget; onClose
               </div>
             </div>
           )}
+          {/* Public links section */}
+          <div className="swan-shares-modal-section">
+            <div className="swan-shares-modal-section-header">
+              <div className="swan-shares-modal-section-title">Share publicly</div>
+              <button className="swan-shares-search-result-add" disabled={creatingLink} onClick={handleCreateLink}>
+                {creatingLink ? 'Adding...' : 'Add link'}
+              </button>
+            </div>
+            {!granteesLoading && !granteesError && links.length > 0 && (
+              <div className="swan-shares-grantee-list">
+                {links.map(l => (
+                  <LinkItem key={l.shareId} link={l} onCopy={copyLink} onRemove={handleRemoveLink} />
+                ))}
+              </div>
+            )}
+          </div>
           {granteesLoading && <div className="swan-shares-modal-empty">Loading...</div>}
           {granteesError && (
             <div className="swan-shares-modal-empty" style={{ color: 'var(--jp-error-color1)' }}>

@@ -57,8 +57,11 @@ interface RawSharedByMePublic {
   public_share: {
     id: { opaque_id: string };
     resource_id: { opaque_id: string };
+    display_name?: string;
+    permissions?: Record<string, unknown>;
   };
   resource_info: RawResourceInfo;
+  url?: string;
 }
 
 interface RawSharedWithMe {
@@ -236,6 +239,13 @@ export interface ShareGranteeDetail {
   displayName?: string;
 }
 
+export interface PublicLinkDetail {
+  shareId: string;
+  displayName: string;
+  url: string;
+  role: ShareRole;
+}
+
 export interface UserSearchResult {
   opaqueId: string;
   idp: string;
@@ -253,7 +263,9 @@ function roleFromRawPermissions(permissions: Record<string, unknown> | undefined
   return perms?.initiate_file_upload ? 'EDITOR' : 'VIEWER';
 }
 
-export async function fetchSharesForResource(path: string): Promise<ShareGranteeDetail[]> {
+export async function fetchSharesForResource(
+  path: string
+): Promise<{ grantees: ShareGranteeDetail[]; links: PublicLinkDetail[] }> {
   const settings = ServerConnection.makeSettings();
   const url = settings.baseUrl + 'cs3/shares/getSharedByResource?' + new URLSearchParams({ path });
   const resp = await ServerConnection.makeRequest(url, {}, settings);
@@ -285,7 +297,39 @@ export async function fetchSharesForResource(path: string): Promise<ShareGrantee
     results.push(detail);
   }
 
-  return results;
+  const links = (data.public_shares as RawSharedByMePublic[]).map(item => ({
+    shareId: item.public_share.id.opaque_id,
+    displayName: item.public_share.display_name ?? '',
+    url: item.url ?? '',
+    role: roleFromRawPermissions(item.public_share.permissions)
+  }));
+
+  return { grantees: results, links };
+}
+
+export async function createPublicLink(path: string, role: ShareRole): Promise<string> {
+  const settings = ServerConnection.makeSettings();
+  const url = settings.baseUrl + 'cs3/shares/link?' + new URLSearchParams({ path });
+  const resp = await ServerConnection.makeRequest(url, { method: 'POST', body: JSON.stringify({ role }) }, settings);
+
+  if (!resp.ok) {
+    const data = await resp.json();
+    throw new ServerConnection.ResponseError(resp, data.error ?? resp.statusText);
+  }
+
+  const data = await resp.json();
+  return data.url;
+}
+
+export async function removePublicLink(shareId: string): Promise<void> {
+  const settings = ServerConnection.makeSettings();
+  const url = settings.baseUrl + 'cs3/shares/link?' + new URLSearchParams({ share_id: shareId });
+  const resp = await ServerConnection.makeRequest(url, { method: 'DELETE' }, settings);
+
+  if (!resp.ok) {
+    const data = await resp.json();
+    throw new ServerConnection.ResponseError(resp, data.error ?? resp.statusText);
+  }
 }
 
 export async function removeShare(shareId: string): Promise<void> {
