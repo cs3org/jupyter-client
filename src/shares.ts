@@ -5,6 +5,7 @@ type ShareDirection = 'BY_ME' | 'WITH_ME';
 type ShareType = 'REGULAR' | 'PUBLIC';
 type ShareState = 'SHARE_STATE_ACCEPTED' | 'SHARE_STATE_PENDING' | 'SHARE_STATE_REJECTED';
 export type ShareRole = 'VIEWER' | 'EDITOR';
+export type UserType = 'USER_TYPE_PRIMARY' | 'USER_TYPE_SECONDARY' | 'USER_TYPE_SERVICE' | 'USER_TYPE_LIGHTWEIGHT';
 
 interface RawUserGrantee {
   type: 'GRANTEE_TYPE_USER';
@@ -345,9 +346,9 @@ export async function createShare(
   }
 }
 
-export async function findUsers(query: string, signal?: AbortSignal): Promise<UserSearchResult[]> {
+export async function findUsers(query: string, userType: UserType, signal?: AbortSignal): Promise<UserSearchResult[]> {
   const settings = ServerConnection.makeSettings();
-  const url = settings.baseUrl + 'cs3/find/users?' + new URLSearchParams({ search: query });
+  const url = settings.baseUrl + 'cs3/find/users?' + new URLSearchParams({ search: query, type: userType });
   const resp = await ServerConnection.makeRequest(url, { signal }, settings);
 
   if (!resp.ok) {
