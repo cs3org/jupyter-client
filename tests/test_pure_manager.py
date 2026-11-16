@@ -154,3 +154,12 @@ def test_chunked_upload_assembles_file(manager, patch_cs3):
     assert patch_cs3.files[f"{ROOT}/big.txt"] == b"aabbcc"
     # the upload holds our lock from chunk 1 onwards
     assert patch_cs3.locks[f"{ROOT}/big.txt"]["app_name"] == manager.lock_holder
+
+
+def test_is_hidden_ignores_the_local_disk(patch_cs3, tmp_path):
+    # Something we cannot read is mounted where the storage would be, like
+    # EOS FUSE without a Kerberos ticket. Only the name decides.
+    manager = make_manager(CS3LargeFileManager, patch_cs3, root_dir=str(tmp_path))
+    (tmp_path / "user").mkdir(mode=0)
+    assert not asyncio.run(manager.is_hidden("user/r/rwelande"))
+    assert asyncio.run(manager.is_hidden("user/.hidden"))
