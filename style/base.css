@@ -394,6 +394,19 @@
   margin-bottom: 8px;
 }
 
+.swan-shares-modal-section-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.swan-shares-link-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
 /* ── Grantee list ─────────────────────────────────────────── */
 
 .swan-shares-grantee-list {
